@@ -1,0 +1,10 @@
+CREATE OR REPLACE FUNCTION fn_create_travel_report()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (NEW.status = 'CONCLUIDA' AND OLD.status != 'CONCLUIDA') THEN
+        INSERT INTO relatorios_viagem (data_entrega, ...)
+        VALUES (NEW.data_volta + INTERVAL '5 days', ...);
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;

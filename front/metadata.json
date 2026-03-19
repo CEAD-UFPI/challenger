@@ -1,0 +1,5 @@
+{
+  "name": "Sistema de Diárias e Passagens (SDP)",
+  "description": "Sistema moderno para gestão de diárias e passagens governamentais, migrado de Django para Node.js, Prisma e React.",
+  "requestFramePermissions": []
+}

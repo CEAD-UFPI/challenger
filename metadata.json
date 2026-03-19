@@ -1,0 +1,8 @@
+
+{
+  "name": "Sistema de Diárias e Passagens (SDP)",
+  "description": "Arquitetura Profissional: Frontend (React/Zustand) e Backend (Node/Prisma/PostgreSQL).",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
