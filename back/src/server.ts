@@ -1,4 +1,7 @@
+import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
+import { JWT_SECRET } from "./jwtConfig";
+import { registerFinancialRoutes } from "./financialRoutes";
 import { sendConfirmationEmail } from "./services/emailService";
 import bcrypt from "bcryptjs";
 import cors from "cors";
@@ -10,7 +13,6 @@ import jwt from "jsonwebtoken";
 // =============================================================
 const prisma = new PrismaClient();
 const app = express();
-const JWT_SECRET = "segredo-super-secreto-mude-em-producao";
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
@@ -31,10 +33,17 @@ const getUserFromRequest = (req: Request) => {
   }
 };
 
+const isAdminOrFinanceiro = (u: { roles?: string[] }) =>
+  !!u.roles?.some((r) => ["ADMIN", "FINANCEIRO"].includes(r));
+
 // Gerador de CRUD Automático (Apenas para tabelas simples sem regras complexas)
+// GET: qualquer utilizador autenticado (ex.: solicitante carrega listas para formulários)
+// POST/DELETE: apenas ADMIN ou FINANCEIRO
 const createCrudRoutes = (modelName: string, model: any) => {
   // Listar
   app.get(`/api/${modelName}`, async (req, res) => {
+    const currentUser = getUserFromRequest(req);
+    if (!currentUser) return res.status(401).json({ error: "Não autorizado" });
     try {
       const items = await model.findMany();
       res.json(items);
@@ -46,6 +55,10 @@ const createCrudRoutes = (modelName: string, model: any) => {
 
   // Criar
   app.post(`/api/${modelName}`, async (req, res) => {
+    const currentUser = getUserFromRequest(req);
+    if (!currentUser) return res.status(401).json({ error: "Não autorizado" });
+    if (!isAdminOrFinanceiro(currentUser))
+      return res.status(403).json({ error: "Sem permissão." });
     try {
       const item = await model.create({ data: req.body });
       res.status(201).json(item);
@@ -59,6 +72,10 @@ const createCrudRoutes = (modelName: string, model: any) => {
 
   // Deletar
   app.delete(`/api/${modelName}/:id`, async (req, res) => {
+    const currentUser = getUserFromRequest(req);
+    if (!currentUser) return res.status(401).json({ error: "Não autorizado" });
+    if (!isAdminOrFinanceiro(currentUser))
+      return res.status(403).json({ error: "Sem permissão." });
     try {
       await model.delete({ where: { id: Number(req.params.id) } });
       res.json({ success: true });
@@ -568,6 +585,8 @@ createCrudRoutes("cursos", prisma.course);
 createCrudRoutes("destinos", prisma.destination);
 createCrudRoutes("objetivos", prisma.solicitationObjective);
 createCrudRoutes("tipos-diaria", prisma.dailyRateType);
+
+registerFinancialRoutes(app, prisma);
 
 // =============================================================
 // 10. INICIALIZAÇÃO

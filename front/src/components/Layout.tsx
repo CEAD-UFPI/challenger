@@ -4,6 +4,7 @@ import {
   Building2,
   FileCheck,
   GraduationCap,
+  Layers,
   LayoutDashboard,
   LogOut,
   MapPin,
@@ -77,6 +78,12 @@ export default function Layout() {
           label: "Objetivos",
           path: "/app/cadastros/objetivos",
           icon: Target,
+          allowed: ["ADMIN", "FINANCEIRO"],
+        },
+        {
+          label: "Natureza de Despesa",
+          path: "/app/cadastros/naturezas-despesa",
+          icon: Layers,
           allowed: ["ADMIN", "FINANCEIRO"],
         },
         {

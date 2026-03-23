@@ -6,15 +6,17 @@ import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 
 // --- IMPORTANTE: Importe as duas telas de solicitações ---
-import NewSolicitation from "./pages/movimentacoes/NewSolicitation"; // A tela do formulário (ajuste o caminho se necessário)
-import Solicitations from "./pages/movimentacoes/Solicitations"; // A tela da tabela/aprovação
+import NewSolicitation from "./pages/Movimentacoes/NewSolicitation";
+import Solicitations from "./pages/Movimentacoes/Solicitations";
 
 import GenericCadastro from "./components/GenericCadastro";
-import Agents from "./pages/cadastros/Agents";
+import Agents from "./pages/Cadastros/Agents";
 import CompleteProfile from "./pages/Cadastros/CompleteProfile";
-import DailyValues from "./pages/cadastros/DailyValues";
-import Projects from "./pages/cadastros/Projects";
-import Solicitants from "./pages/cadastros/Solicitants";
+import DailyValues from "./pages/Cadastros/DailyValues";
+import Projects from "./pages/Cadastros/Projects";
+import ProjectFinancialEdit from "./pages/Cadastros/ProjectFinancialEdit";
+import NaturezasDespesa from "./pages/Cadastros/NaturezasDespesa";
+import Solicitants from "./pages/Cadastros/Solicitants";
 
 import { Building2, GraduationCap, MapPin, Target } from "lucide-react";
 
@@ -56,7 +58,16 @@ export default function App() {
           />
 
           <Route path="cadastros/agentes" element={<Agents />} />
+          {/* Rota dinâmica antes da estática: evita conflito de matching em alguns casos */}
+          <Route
+            path="cadastros/projetos/:projectId"
+            element={<ProjectFinancialEdit />}
+          />
           <Route path="cadastros/projetos" element={<Projects />} />
+          <Route
+            path="cadastros/naturezas-despesa"
+            element={<NaturezasDespesa />}
+          />
           <Route path="cadastros/tipos-diaria" element={<DailyValues />} />
           <Route path="cadastros/solicitantes" element={<Solicitants />} />
 

@@ -1,4 +1,4 @@
-import { PrismaClient, Role } from "@prisma/client"; // Adicionado Role para tipagem segura
+import { PrismaClient, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
@@ -10,7 +10,7 @@ async function main() {
   // 1. Criar ADMIN (Acesso Total: Cadastros + Financeiro)
   const admin = await prisma.user.upsert({
     where: { email: "admin@ufpi.edu.br" },
-    update: {}, // Se já existir, não faz nada
+    update: { status: "ATIVO", podeRemanejarCredito: true },
     create: {
       email: "admin@ufpi.edu.br",
       username: "admin",
@@ -19,13 +19,15 @@ async function main() {
       passwordHash,
       roles: [Role.ADMIN, Role.FINANCEIRO], // Enum seguro
       cpf: "00000000000",
+      status: "ATIVO",
+      podeRemanejarCredito: true,
     },
   });
 
   // 2. Criar AGENTE (Professor) com Banco Relacional
   const professor = await prisma.user.upsert({
     where: { email: "professor@ufpi.edu.br" },
-    update: {},
+    update: { status: "ATIVO" },
     create: {
       email: "professor@ufpi.edu.br",
       username: "professor",
@@ -34,6 +36,7 @@ async function main() {
       passwordHash,
       roles: [Role.AGENTE],
       cpf: "11122233344",
+      status: "ATIVO",
       // CORREÇÃO AQUI: Em vez de string, usamos objeto de conexão
       banco: {
         connectOrCreate: {
@@ -47,7 +50,7 @@ async function main() {
   // 3. Criar COORDENADOR (Solicitante)
   const coord = await prisma.user.upsert({
     where: { email: "coord@ufpi.edu.br" },
-    update: {},
+    update: { status: "ATIVO" },
     create: {
       email: "coord@ufpi.edu.br",
       username: "coordenador",
@@ -56,6 +59,7 @@ async function main() {
       passwordHash,
       roles: [Role.COORDENACAO],
       cpf: "99988877766",
+      status: "ATIVO",
     },
   });
 

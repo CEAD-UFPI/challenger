@@ -11,11 +11,11 @@ const api = axios.create({
 // --- 1. INTERCEPTOR DE REQUISIÇÃO (O "Entregador de Crachá") ---
 // Antes de qualquer chamada para a API, ele roda esse código
 api.interceptors.request.use((config) => {
-  // Pega o token diretamente do estado global
-  const token = useAuthStore.getState().token;
+  // Evita dependência circular authStore ↔ api: fallback ao localStorage
+  const token =
+    useAuthStore.getState().token ?? localStorage.getItem("sdp_token");
 
   if (token) {
-    // Se tiver token, anexa no cabeçalho de Autorização
     config.headers.Authorization = `Bearer ${token}`;
   }
 
