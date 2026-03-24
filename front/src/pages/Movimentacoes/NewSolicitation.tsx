@@ -10,7 +10,7 @@ import {
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
-import api from "../../services/api"; // Ajuste o caminho do import da API se necessário
+import api from "../../services/api";
 import { useAuthStore } from "../../store/authStore";
 
 const schema = z
@@ -25,6 +25,7 @@ const schema = z
     projetoId: z.string().min(1, "Selecione o projeto"),
     tipoDiariaId: z.string().min(1, "Selecione o tipo de diária"),
     objectiveId: z.string().min(1, "Selecione o objetivo"),
+    courseId: z.string().min(1, "O curso é obrigatório"), // Adicionado curso ao schema
     agentIds: z.array(z.string()).min(1, "Selecione pelo menos um passageiro"),
   })
   .refine((data) => new Date(data.dataIda) < new Date(data.dataVolta), {
@@ -40,55 +41,61 @@ export default function NewSolicitation() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  // Estados para guardar os dados do banco
   const [projetos, setProjetos] = useState<any[]>([]);
   const [tiposDiaria, setTiposDiaria] = useState<any[]>([]);
   const [objetivos, setObjetivos] = useState<any[]>([]);
   const [agentes, setAgentes] = useState<any[]>([]);
   const [destinos, setDestinos] = useState<any[]>([]);
+  const [cursos, setCursos] = useState<any[]>([]);
 
   const {
     register,
     handleSubmit,
     reset,
+    setValue,
     formState: { errors },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
   });
 
-  // Carrega as listas de opções ao abrir a tela
   useEffect(() => {
     const loadOptions = async () => {
       try {
-        const [projRes, tiposRes, objRes, agentesRes, destRes] =
+        const [projRes, tiposRes, objRes, agentesRes, destRes, cursosRes] =
           await Promise.all([
             api.get("/projetos"),
             api.get("/tipos-diaria"),
             api.get("/objetivos"),
-            api.get("/users"), // Vai trazer só os agentes do curso do solicitante (Filtro do Backend)
+            api.get("/users"),
             api.get("/destinos"),
+            api.get("/cursos"),
           ]);
         setProjetos(projRes.data);
         setTiposDiaria(tiposRes.data);
         setObjetivos(objRes.data);
-        // Filtra para mostrar apenas passageiros na lista (sem admins/financeiro)
         setAgentes(
           agentesRes.data.filter((u: any) => u.roles.includes("AGENTE")),
         );
         setDestinos(destRes.data);
+        setCursos(cursosRes.data);
+
+        // Preenchimento automático do curso para Solicitantes
+        if (user && !user.roles.includes("ADMIN")) {
+          setValue("courseId", String(user.courseId));
+        }
       } catch (error) {
         console.error("Erro ao carregar opções do formulário", error);
       }
     };
     loadOptions();
-  }, []);
+  }, [user, setValue]);
 
   const calcularDiarias = (ida: string, volta: string) => {
     const dataIda = new Date(ida);
     const dataVolta = new Date(volta);
     const diffTime = Math.abs(dataVolta.getTime() - dataIda.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return diffDays;
+    return diffDays > 3.5 ? 3.5 : diffDays; // Limite de 3.5 diárias
   };
 
   const onSubmit = async (data: FormData) => {
@@ -98,39 +105,32 @@ export default function NewSolicitation() {
 
     try {
       const payload = {
+        ...data,
         requesterId: user?.id,
-        motivo: data.motivo,
-        origem: data.origem,
-        destino: data.destino,
-        dataIda: data.dataIda,
-        dataVolta: data.dataVolta,
-        projetoId: data.projetoId,
-        tipoDiariaId: data.tipoDiariaId,
-        objectiveId: data.objectiveId,
         qtdDiarias: calcularDiarias(data.dataIda, data.dataVolta),
-        // Converte os IDs selecionados para números
         agentIds: data.agentIds.map((id) => Number(id)),
+        projetoId: Number(data.projetoId),
+        tipoDiariaId: Number(data.tipoDiariaId),
+        objectiveId: Number(data.objectiveId),
+        courseId: Number(data.courseId),
       };
 
       await api.post("/solicitacoes", payload);
       setSuccess(true);
       reset();
-      window.scrollTo(0, 0);
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err: any) {
-      if (err.response?.status === 403) {
-        setErrorMsg("🚫 " + err.response.data.error); // Mensagem de bloqueio do backend
-      } else {
-        setErrorMsg(
-          "Ocorreu um erro ao processar sua solicitação. Verifique os dados.",
-        );
-      }
+      setErrorMsg(
+        err.response?.data?.error || "Erro ao processar solicitação.",
+      );
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
+      {/* Header e Alertas de Feedback */}
       <div className="flex items-center gap-4 mb-2">
         <div className="bg-blue-600 p-3 rounded-2xl text-white shadow-lg shadow-blue-600/20">
           <Plane size={32} />
@@ -140,116 +140,124 @@ export default function NewSolicitation() {
             Nova Viagem
           </h1>
           <p className="text-slate-500 font-medium">
-            Preencha os dados operacionais da missão.
+            Configure a missão institucional e os viajantes.
           </p>
         </div>
       </div>
 
       {errorMsg && (
-        <div className="bg-red-50 border-2 border-red-100 p-6 rounded-3xl flex items-start gap-4 text-red-700 shadow-xl shadow-red-100/50">
+        <div className="bg-red-50 border-2 border-red-100 p-6 rounded-3xl flex items-start gap-4 text-red-700">
           <AlertCircle className="shrink-0 mt-1" size={24} />
           <div>
-            <p className="font-black text-lg leading-tight mb-1">Atenção</p>
-            <p className="text-sm font-medium opacity-90">{errorMsg}</p>
+            <p className="font-black text-lg">Atenção</p>
+            <p className="text-sm font-medium">{errorMsg}</p>
           </div>
         </div>
       )}
 
       {success && (
-        <div className="bg-emerald-50 border-2 border-emerald-100 p-6 rounded-3xl flex items-start gap-4 text-emerald-700 shadow-xl shadow-emerald-100/50">
+        <div className="bg-emerald-50 border-2 border-emerald-100 p-6 rounded-3xl flex items-start gap-4 text-emerald-700">
           <CheckCircle className="shrink-0 mt-1" size={24} />
           <div>
-            <p className="font-black text-lg leading-tight mb-1">Sucesso!</p>
-            <p className="text-sm font-medium opacity-90">
-              Solicitação enviada para análise da Direção.
+            <p className="font-black text-lg">Sucesso!</p>
+            <p className="text-sm font-medium">
+              Solicitação enviada para análise.
             </p>
           </div>
         </div>
       )}
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-        {/* Bloco 1: Rota e Datas */}
+        {/* Bloco 1: Rota, Datas e Curso */}
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 space-y-6">
           <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-            <Plane size={14} /> Rota e Datas
+            <Plane size={14} /> Detalhes Logísticos
           </h3>
+
+          <div className="grid grid-cols-1 md:grid-cols-1 gap-6">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">
+                Curso / Departamento
+              </label>
+              <select
+                {...register("courseId")}
+                disabled={!user?.roles.includes("ADMIN")}
+                className={`w-full border rounded-xl p-3 text-sm font-bold outline-none transition-all ${
+                  !user?.roles.includes("ADMIN")
+                    ? "bg-slate-100 text-slate-500 cursor-not-allowed"
+                    : "bg-slate-50 border-slate-200 focus:ring-2 focus:ring-blue-500"
+                }`}>
+                <option value="">Selecione o curso...</option>
+                {cursos.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nome}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase ml-1">
-                Origem (Texto)
+                Origem
               </label>
-              <input
+              <select
                 {...register("origem")}
-                placeholder="Ex: Teresina - PI"
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              {errors.origem && (
-                <p className="text-red-500 text-xs font-bold">
-                  {errors.origem.message}
-                </p>
-              )}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">Selecione...</option>
+                {destinos.map((d) => (
+                  <option key={`ori-${d.id}`} value={d.nome}>
+                    {d.nome} - {d.estado}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase ml-1">
-                Destino (Cidade)
+                Destino
               </label>
               <select
                 {...register("destino")}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500">
                 <option value="">Selecione...</option>
                 {destinos.map((d) => (
-                  <option key={d.id} value={d.nome}>
+                  <option key={`dest-${d.id}`} value={d.nome}>
                     {d.nome} - {d.estado}
                   </option>
                 ))}
               </select>
-              {errors.destino && (
-                <p className="text-red-500 text-xs font-bold">
-                  {errors.destino.message}
-                </p>
-              )}
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase ml-1">
-                Saída
+                Data/Hora Saída
               </label>
               <input
                 type="datetime-local"
                 {...register("dataIda")}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold"
               />
-              {errors.dataIda && (
-                <p className="text-red-500 text-xs font-bold">
-                  {errors.dataIda.message}
-                </p>
-              )}
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase ml-1">
-                Retorno
+                Data/Hora Retorno
               </label>
               <input
                 type="datetime-local"
                 {...register("dataVolta")}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold"
               />
-              {errors.dataVolta && (
-                <p className="text-red-500 text-xs font-bold">
-                  {errors.dataVolta.message}
-                </p>
-              )}
             </div>
           </div>
         </div>
 
-        {/* Bloco 2: Vínculos (Projeto, Tipo Diária) */}
+        {/* Bloco 2: Vínculos Financeiros */}
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 space-y-6">
           <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-            <Briefcase size={14} /> Finalidade e Recursos
+            <Briefcase size={14} /> Classificação Orçamentária
           </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -259,18 +267,23 @@ export default function NewSolicitation() {
               </label>
               <select
                 {...register("projetoId")}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold">
-                <option value="">Selecione...</option>
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">Selecione o projeto...</option>
                 {projetos.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.nomeDoProjeto}
+                    {p.nomeDoProjeto} {p.numTed ? `(TED: ${p.numTed})` : ""}
                   </option>
                 ))}
               </select>
+              {errors.projetoId && (
+                <p className="text-red-500 text-xs font-bold">
+                  {errors.projetoId.message}
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase ml-1">
-                Objetivo da Viagem
+                Objetivo
               </label>
               <select
                 {...register("objectiveId")}
@@ -278,14 +291,14 @@ export default function NewSolicitation() {
                 <option value="">Selecione...</option>
                 {objetivos.map((o) => (
                   <option key={o.id} value={o.id}>
-                    {o.nome}
+                    {o.objetivo}
                   </option>
                 ))}
               </select>
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase ml-1">
-                Tipo de Pagamento
+                Tipo Diária
               </label>
               <select
                 {...register("tipoDiariaId")}
@@ -302,70 +315,60 @@ export default function NewSolicitation() {
 
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase ml-1">
-              Justificativa da Missão
+              Justificativa
             </label>
             <textarea
               {...register("motivo")}
               className="w-full bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm font-medium min-h-[100px] outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Descreva detalhadamente o motivo..."
+              placeholder="Descreva o propósito da viagem..."
             />
-            {errors.motivo && (
-              <p className="text-red-500 text-xs font-bold">
-                {errors.motivo.message}
-              </p>
-            )}
           </div>
         </div>
 
-        {/* Bloco 3: Passageiros */}
+        {/* Bloco 3: Seleção de Agentes com Nome Social */}
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 space-y-6">
           <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-            <Users size={14} /> Agentes em Viagem
+            <Users size={14} /> Agentes Selecionados
           </h3>
 
-          <div className="space-y-2">
-            <p className="text-sm text-slate-500 mb-4">
-              Selecione quem irá viajar. Apenas agentes do seu departamento
-              estão listados.
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-60 overflow-y-auto p-2 border border-slate-100 rounded-xl bg-slate-50">
-              {agentes.length === 0 ? (
-                <p className="text-sm text-slate-400 p-4">
-                  Nenhum agente cadastrado no seu curso.
-                </p>
-              ) : (
-                agentes.map((agente) => (
-                  <label
-                    key={agente.id}
-                    className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-blue-500 transition-colors">
-                    <input
-                      type="checkbox"
-                      value={agente.id}
-                      {...register("agentIds")}
-                      className="w-4 h-4 text-blue-600 rounded"
-                    />
-                    <span className="text-sm font-bold text-slate-700">
-                      {agente.firstName} {agente.lastName}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-60 overflow-y-auto p-2 bg-slate-50 rounded-xl">
+            {agentes.map((agente) => {
+              const nomeExibicao =
+                agente.nomeSocial || `${agente.firstName} ${agente.lastName}`;
+              return (
+                <label
+                  key={agente.id}
+                  className="flex items-start gap-3 p-4 bg-white border border-slate-200 rounded-xl cursor-pointer hover:border-blue-500 transition-colors">
+                  <input
+                    type="checkbox"
+                    value={agente.id}
+                    {...register("agentIds")}
+                    className="w-5 h-5 text-blue-600 rounded mt-1"
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-sm font-black text-slate-700">
+                      {nomeExibicao}
                     </span>
-                  </label>
-                ))
-              )}
-            </div>
-            {errors.agentIds && (
-              <p className="text-red-500 text-xs font-bold mt-2">
-                {errors.agentIds.message}
-              </p>
-            )}
+                    <span className="text-[10px] font-mono font-bold text-slate-400">
+                      CPF:{" "}
+                      {agente.cpf?.replace(
+                        /(\d{3})(\d{3})(\d{3})(\d{2})/,
+                        "$1.$2.$3-$4",
+                      )}
+                    </span>
+                  </div>
+                </label>
+              );
+            })}
           </div>
         </div>
 
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-slate-900 text-white font-black py-5 rounded-2xl shadow-xl hover:bg-blue-600 transition-all flex justify-center items-center gap-2 uppercase tracking-widest text-xs">
+          className="w-full bg-slate-900 text-white font-black py-5 rounded-2xl shadow-xl hover:bg-blue-600 transition-all flex justify-center items-center gap-2 uppercase tracking-widest text-xs disabled:opacity-50">
           {loading ? (
-            "Enviando para Análise..."
+            "Processando..."
           ) : (
             <>
               <Send size={18} /> Submeter Solicitação

@@ -1,9 +1,10 @@
 import { PrismaClient } from "@prisma/client";
-import { sendConfirmationEmail } from "./services/emailService";
 import bcrypt from "bcryptjs";
 import cors from "cors";
+import "dotenv/config"; // 👈 Garante a leitura do arquivo .env com a senha do e-mail
 import express, { Request, Response } from "express";
 import jwt from "jsonwebtoken";
+import { sendConfirmationEmail } from "./services/emailService";
 
 // =============================================================
 // 1. CONFIGURAÇÕES INICIAIS
@@ -93,25 +94,30 @@ class SolicitationService {
 
   static async create(data: any) {
     const { requesterId, agentIds, ...fields } = data;
-    await this.checkBlocklist(agentIds);
+
+    // Converte os IDs dos agentes para números para garantir a validação
+    const numericAgentIds = agentIds.map((id: any) => Number(id));
+    await this.checkBlocklist(numericAgentIds);
 
     return await prisma.solicitation.create({
       data: {
-        requesterId,
+        // Conecta o solicitante (Dono da viagem)
+        requester: { connect: { id: Number(requesterId) } },
         motivoSolicitacao: fields.motivo,
         origem: fields.origem,
         destino: fields.destino,
         dataIda: new Date(fields.dataIda),
         dataVolta: new Date(fields.dataVolta),
         status: "AGUARDANDO_DIRECAO",
+        // Cria os detalhes individuais para cada agente selecionado
         details: {
-          create: agentIds.map((agentId: number) => ({
-            agentId: agentId,
-            projetoId: Number(fields.projetoId),
-            tipoDiariaId: Number(fields.tipoDiariaId),
-            objectiveId: Number(fields.objectiveId),
-            qtdDiarias: fields.qtdDiarias > 3.5 ? 3.5 : fields.qtdDiarias,
-            valorDiarias: 0,
+          create: numericAgentIds.map((agentId: number) => ({
+            agent: { connect: { id: agentId } },
+            project: { connect: { id: Number(fields.projetoId) } },
+            dailyRateType: { connect: { id: Number(fields.tipoDiariaId) } },
+            objective: { connect: { id: Number(fields.objectiveId) } },
+            qtdDiarias:
+              Number(fields.qtdDiarias) > 3.5 ? 3.5 : Number(fields.qtdDiarias),
           })),
         },
       },
@@ -158,7 +164,7 @@ class SolicitationService {
 }
 
 // =============================================================
-// 4. ROTAS DE AUTENTICAÇÃO E USUÁRIOS
+// 4. ROTAS DE AUTENTICAÇÃO E PERFIL (ME)
 // =============================================================
 
 // Login
@@ -176,17 +182,19 @@ app.post("/api/login", async (req: Request, res: Response) => {
 
     // Impede o login se o usuário não finalizou o cadastro ou foi bloqueado
     if (user.status !== "ATIVO") {
-      return res
-        .status(403)
-        .json({
-          error: "Sua conta está pendente de ativação ou foi bloqueada.",
-        });
+      return res.status(403).json({
+        error: "Sua conta está pendente de ativação ou foi bloqueada.",
+      });
     }
 
     const isSolicitant =
       !!user.solicitantProfile ||
       user.roles.includes("COORDENACAO") ||
       user.roles.includes("ADMIN");
+
+    const displayName = user.nomeSocial
+      ? user.nomeSocial
+      : `${user.firstName || ""} ${user.lastName || ""}`.trim();
 
     const courseId = user.courseId || user.solicitantProfile?.courseId;
 
@@ -204,7 +212,7 @@ app.post("/api/login", async (req: Request, res: Response) => {
     return res.json({
       user: {
         id: user.id,
-        name: user.firstName,
+        name: displayName,
         email: user.email,
         roles: user.roles,
         courseId: courseId,
@@ -216,6 +224,71 @@ app.post("/api/login", async (req: Request, res: Response) => {
     return res.status(500).json({ error: "Erro interno" });
   }
 });
+
+// Buscar o próprio perfil (ME)
+app.get("/api/me", async (req, res) => {
+  const currentUser = getUserFromRequest(req);
+  if (!currentUser) return res.status(401).json({ error: "Não autorizado" });
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: currentUser.id },
+      include: { course: true, banco: true },
+    });
+
+    if (user) {
+      const { passwordHash, ...safeUser } = user;
+      return res.json(safeUser);
+    }
+    return res.status(404).json({ error: "Usuário não encontrado" });
+  } catch (error) {
+    res.status(500).json({ error: "Erro ao buscar perfil" });
+  }
+});
+
+// Atualizar o próprio perfil (ME)
+app.put("/api/me", async (req, res) => {
+  const currentUser = getUserFromRequest(req);
+  if (!currentUser) return res.status(401).json({ error: "Não autorizado" });
+
+  const {
+    telefone,
+    celular,
+    cep,
+    endereco,
+    bairro,
+    cidade,
+    estado,
+    bancoId,
+    agencia,
+    conta,
+  } = req.body;
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: currentUser.id },
+      data: {
+        telefone,
+        celular,
+        cep,
+        endereco,
+        bairro,
+        cidade,
+        estado,
+        bankId: bancoId ? Number(bancoId) : null,
+        agencia,
+        conta,
+      },
+    });
+    res.json({ message: "Perfil atualizado com sucesso!", user: updatedUser });
+  } catch (error) {
+    res.status(400).json({ error: "Erro ao atualizar o perfil." });
+  }
+});
+
+// =============================================================
+// 5. ROTAS DE USUÁRIOS (GERAIS)
+// =============================================================
 
 // Listar Usuários (Com filtro de Curso)
 app.get("/api/users", async (req, res) => {
@@ -245,14 +318,11 @@ app.get("/api/users", async (req, res) => {
   res.json(safeUsers);
 });
 
-// -------------------------------------------------------------
-// FLUXO NOVO DE CRIAÇÃO E APROVAÇÃO DE AGENTES
-// -------------------------------------------------------------
-
 // 1. Criar Usuário Manualmente (Admin/Gestor cria e o sistema envia e-mail)
 app.post("/api/users", async (req, res) => {
   try {
-    const { cpf, email, role, courseId, ...userData } = req.body;
+    // 👇 Correção do erro da password: ela é extraída aqui e não vai para o prisma.create
+    const { cpf, email, role, courseId, password, ...userData } = req.body;
     const cleanCpf = cpf.replace(/\D/g, "");
 
     // Gera uma senha temporária
@@ -278,9 +348,11 @@ app.post("/api/users", async (req, res) => {
     });
 
     // Dispara o e-mail de convite
+    const nomeParaEmail = user.nomeSocial || user.firstName || "Agente";
+
     await sendConfirmationEmail(
       user.email,
-      user.firstName || "Agente",
+      nomeParaEmail || "Agente",
       tempToken,
     );
 
@@ -321,12 +393,10 @@ app.post("/api/users/public/auto-cadastro", async (req, res) => {
       },
     });
 
-    res
-      .status(201)
-      .json({
-        message: "Cadastro realizado. Aguarde a aprovação do seu departamento.",
-        user,
-      });
+    res.status(201).json({
+      message: "Cadastro realizado. Aguarde a aprovação do seu departamento.",
+      user,
+    });
   } catch (e: any) {
     if (e.code === "P2002")
       return res.status(400).json({ error: "CPF ou E-mail já cadastrados." });
@@ -336,8 +406,8 @@ app.post("/api/users/public/auto-cadastro", async (req, res) => {
 
 // 3. Completar Perfil (Agente clica no link do e-mail)
 app.post("/api/users/completar-cadastro", async (req, res) => {
-  const { token, password, telefone, cep, endereco, bancoId, agencia, conta } =
-    req.body;
+  // Recebe apenas token e password baseados na nova tela
+  const { token, password } = req.body;
 
   try {
     const decoded: any = jwt.verify(token, JWT_SECRET);
@@ -347,18 +417,12 @@ app.post("/api/users/completar-cadastro", async (req, res) => {
       where: { id: decoded.id },
       data: {
         passwordHash,
-        telefone,
-        cep,
-        endereco,
-        bankId: bancoId ? Number(bancoId) : null,
-        agencia,
-        conta,
         status: "ATIVO",
       },
     });
 
     res.json({
-      message: "Perfil atualizado! Você já pode fazer login.",
+      message: "Senha criada! Você já pode fazer login.",
       user: updatedUser,
     });
   } catch (err) {
@@ -376,8 +440,77 @@ app.delete("/api/users/:id", async (req, res) => {
   }
 });
 
+// Atualizar Usuário Manualmente (Admin editando outro usuário)
+app.put("/api/users/:id", async (req, res) => {
+  try {
+    const { cpf, email, role, courseId, password, ...userData } = req.body;
+    let cleanCpf = cpf ? cpf.replace(/\D/g, "") : undefined;
+
+    // Prepara os dados limpos
+    const updateData: any = {
+      ...userData,
+      courseId: courseId ? Number(courseId) : null,
+      bankId: userData.bankId ? Number(userData.bankId) : null,
+    };
+
+    if (cleanCpf) updateData.cpf = cleanCpf;
+    if (email) updateData.email = email;
+    if (role) updateData.roles = [role];
+
+    const user = await prisma.user.update({
+      where: { id: Number(req.params.id) },
+      data: updateData,
+    });
+
+    res.json({ message: "Usuário atualizado com sucesso", user });
+  } catch (e: any) {
+    if (e.code === "P2002")
+      return res
+        .status(400)
+        .json({ error: "CPF ou E-mail já utilizados por outro usuário." });
+    res.status(500).json({ error: "Erro interno ao atualizar usuário." });
+  }
+});
+// 1. Solicitar recuperação (Gera o e-mail)
+app.post("/api/auth/forgot-password", async (req, res) => {
+  const { email } = req.body;
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.status(404).json({ error: "E-mail não encontrado." });
+
+    const token = jwt.sign({ id: user.id, type: "reset" }, JWT_SECRET, { expiresIn: "1h" });
+    const resetLink = `http://localhost:5173/reset-password?token=${token}`;
+
+    // Reutilizando seu serviço de e-mail (ajuste o texto lá se quiser algo mais específico)
+    await sendConfirmationEmail(user.email, user.nomeSocial || user.firstName || "Usuário", token); 
+    // Dica: No futuro, crie um 'sendResetEmail' específico, mas este serve para testar agora.
+
+    res.json({ message: "Link de recuperação enviado para o e-mail!" });
+  } catch (error) {
+    res.status(500).json({ error: "Erro ao processar solicitação." });
+  }
+});
+
+// 2. Definir nova senha (Reset real)
+app.post("/api/auth/reset-password", async (req, res) => {
+  const { token, password } = req.body;
+  try {
+    const decoded: any = jwt.verify(token, JWT_SECRET);
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    await prisma.user.update({
+      where: { id: decoded.id },
+      data: { passwordHash }
+    });
+
+    res.json({ message: "Senha alterada com sucesso!" });
+  } catch (err) {
+    res.status(401).json({ error: "Link inválido ou expirado." });
+  }
+});
+
 // =============================================================
-// 5. ROTAS DE SOLICITANTES (Vínculo User <-> Curso)
+// 6. ROTAS DE SOLICITANTES (Vínculo User <-> Curso)
 // =============================================================
 
 app.get("/api/solicitantes", async (req, res) => {
@@ -410,7 +543,6 @@ app.post("/api/solicitantes", async (req, res) => {
 
 app.delete("/api/solicitantes/:id", async (req, res) => {
   try {
-    await prisma.user.delete({ where: { id: Number(req.params.id) } }); // Corrigido para deletar da tabela correta se necessário, ou manter conforme a regra de negócio. (Seu código original de solicitantes tinha prisma.solicitant.delete, mas note que mantive igual o seu exceto o erro aqui que eu identifiquei. Vamos deixar o prisma.solicitant.delete)
     await prisma.solicitant.delete({ where: { id: Number(req.params.id) } });
     res.json({ success: true });
   } catch (e) {
@@ -419,25 +551,23 @@ app.delete("/api/solicitantes/:id", async (req, res) => {
 });
 
 // =============================================================
-// 6. ROTAS DE PROJETOS (Com Filtro de Segurança)
+// 7. ROTAS DE PROJETOS (Com Filtro de Segurança)
 // =============================================================
 
 app.get("/api/projetos", async (req, res) => {
   const currentUser = getUserFromRequest(req);
   if (!currentUser) return res.status(401).json({ error: "Não autorizado" });
 
-  const isSuperUser = currentUser.roles.some((r: string) =>
-    ["ADMIN", "FINANCEIRO"].includes(r),
-  );
-
-  let whereClause = {};
-  if (!isSuperUser) {
-    if (!currentUser.courseId) return res.json([]);
-    whereClause = { courseId: currentUser.courseId };
+  try {
+    // Removemos o whereClause que filtrava por curso
+    const items = await prisma.project.findMany({
+      include: { course: true }, // Mantemos o include caso queira mostrar o nome do curso no Select
+      orderBy: { nomeDoProjeto: "asc" },
+    });
+    res.json(items);
+  } catch (e) {
+    res.status(500).json({ error: "Erro ao listar projetos" });
   }
-
-  const items = await prisma.project.findMany({ where: whereClause });
-  res.json(items);
 });
 
 app.post("/api/projetos", async (req, res) => {
@@ -459,7 +589,7 @@ app.post("/api/projetos", async (req, res) => {
 });
 
 // =============================================================
-// 7. ROTAS DE SOLICITAÇÕES (Com Filtro de Segurança)
+// 8. ROTAS DE SOLICITAÇÕES (Com Filtro de Segurança)
 // =============================================================
 
 // Listar (Com filtro por Curso)
@@ -474,16 +604,17 @@ app.get("/api/solicitacoes", async (req, res) => {
   let whereClause: any = {};
   if (!isSuperUser) {
     if (!currentUser.courseId) return res.json([]);
-    // Solicitante vê apenas solicitações do SEU curso
-    whereClause = {
-      requester: { courseId: currentUser.courseId },
-    };
+    // Filtro por curso do solicitante logado
+    whereClause = { requester: { courseId: currentUser.courseId } };
   }
 
   try {
     const items = await prisma.solicitation.findMany({
       where: whereClause,
-      include: { requester: true, details: true },
+      include: {
+        requester: { include: { course: true } }, // Traz o Curso
+        details: { include: { project: true } }, // Traz o Projeto (via detalhes)
+      },
       orderBy: { createdAt: "desc" },
     });
     res.json(items);
@@ -494,13 +625,35 @@ app.get("/api/solicitacoes", async (req, res) => {
 
 // Criar
 app.post("/api/solicitacoes", async (req, res) => {
+  const currentUser = getUserFromRequest(req);
+  if (!currentUser) return res.status(401).json({ error: "Não autorizado" });
+
   try {
-    const result = await SolicitationService.create(req.body);
+    const isSuperUser =
+      currentUser.roles.includes("ADMIN") ||
+      currentUser.roles.includes("FINANCEIRO");
+
+    // Se não for admin, o courseId VEM do token do usuário, ignorando o body
+    const courseIdFinal = isSuperUser
+      ? Number(req.body.courseId)
+      : currentUser.courseId;
+
+    if (!courseIdFinal) {
+      return res
+        .status(400)
+        .json({ error: "O curso é obrigatório para criar uma solicitação." });
+    }
+
+    const payloadSeguro = {
+      ...req.body,
+      requesterId: currentUser.id,
+      courseId: courseIdFinal, // 👈 Força o curso correto
+    };
+
+    const result = await SolicitationService.create(payloadSeguro);
     res.status(201).json(result);
   } catch (err: any) {
-    res
-      .status(err.message.includes("Bloqueado") ? 403 : 400)
-      .json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 
@@ -518,8 +671,33 @@ app.patch("/api/solicitacoes/:id/status", async (req, res) => {
   }
 });
 
+// Excluir Solicitação (Apenas se ainda não foi paga ou processada)
+app.delete("/api/solicitacoes/:id", async (req, res) => {
+  try {
+    const solId = Number(req.params.id);
+    const sol = await prisma.solicitation.findUnique({ where: { id: solId } });
+
+    if (!sol)
+      return res.status(404).json({ error: "Solicitação não encontrada." });
+
+    // Regra de Ouro: Não pode deletar viagem que já foi aprovada pelo financeiro ou paga
+    if (["APROVADO_PARA_PAGAMENTO", "PAGO"].includes(sol.status)) {
+      return res.status(403).json({
+        error:
+          "Viagens já processadas financeiramente não podem ser excluídas.",
+      });
+    }
+
+    // Como configuramos onDelete: Cascade no Prisma, deletar o Header deleta os Detalhes (Agentes) automaticamente!
+    await prisma.solicitation.delete({ where: { id: solId } });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: "Erro ao excluir a solicitação." });
+  }
+});
+
 // =============================================================
-// 8. ROTAS DE RELATÓRIOS (Com Filtro de Segurança)
+// 9. ROTAS DE RELATÓRIOS (Com Filtro de Segurança)
 // =============================================================
 
 app.get("/api/relatorios", async (req, res) => {
@@ -560,7 +738,7 @@ app.get("/api/relatorios", async (req, res) => {
 });
 
 // =============================================================
-// 9. CADASTROS BÁSICOS (Tabelas Auxiliares)
+// 10. CADASTROS BÁSICOS (Tabelas Auxiliares)
 // =============================================================
 
 createCrudRoutes("bancos", prisma.bank);
@@ -570,7 +748,7 @@ createCrudRoutes("objetivos", prisma.solicitationObjective);
 createCrudRoutes("tipos-diaria", prisma.dailyRateType);
 
 // =============================================================
-// 10. INICIALIZAÇÃO
+// 11. INICIALIZAÇÃO
 // =============================================================
 app.listen(PORT, () =>
   console.log(`🚀 Backend Challenger rodando na porta ${PORT}`),

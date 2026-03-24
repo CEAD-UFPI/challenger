@@ -42,10 +42,34 @@ const StatsCard = ({ icon, label, value, color, highlight }: any) => {
 export default function Dashboard() {
   const { user, activeRole } = useAuthStore();
 
-  // Dados Mockados (Em breve conectaremos com a API /solicitacoes)
   const isBlocked = false;
   const recentSolicitations: any[] = [];
 
+  // 👇 NOVA TRAVA DE SEGURANÇA À PROVA DE FALHAS
+  // Se ele NÃO for solicitante E NÃO for do grupo de gestão, ele é um Agente simples!
+  const isSimpleAgent =
+    !user?.isSolicitant &&
+    !user?.roles?.some((r: string) =>
+      ["ADMIN", "FINANCEIRO", "DIRECAO", "COORDENACAO"].includes(r),
+    );
+
+  // Tela SUPER LIMPA para o Agente
+  if (isSimpleAgent) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[70vh] text-center animate-in fade-in duration-500">
+        <h2 className="text-4xl font-black text-slate-300 mb-3">
+          Bem-vindo, {user?.name || "Agente"}!
+        </h2>
+        <p className="text-slate-500 font-medium max-w-sm">
+          Você está no seu painel de Agente. Utilize o menu lateral para
+          verificar seus relatórios de viagem ou atualizar seu perfil
+          operacional.
+        </p>
+      </div>
+    );
+  }
+
+  // O resto do código só aparece para a Gestão / Solicitantes
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <header>
@@ -54,7 +78,7 @@ export default function Dashboard() {
         </h2>
         <p className="text-slate-500 text-sm">
           Bem-vindo, {user?.name}{" "}
-          <span className="font-bold">({activeRole})</span>
+          <span className="font-bold">({activeRole || user?.roles?.[0]})</span>
         </p>
       </header>
 
@@ -132,29 +156,32 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="bg-slate-900 rounded-3xl p-8 text-white flex flex-col justify-between shadow-2xl shadow-slate-400/20">
-          <div>
-            <div className="bg-blue-600 w-fit p-3 rounded-2xl mb-6 shadow-lg shadow-blue-900/50">
-              <Plus />
+        {/* Card de Solicitar Nova Viagem - Só aparece se for solicitante */}
+        {user?.isSolicitant && (
+          <div className="bg-slate-900 rounded-3xl p-8 text-white flex flex-col justify-between shadow-2xl shadow-slate-400/20">
+            <div>
+              <div className="bg-blue-600 w-fit p-3 rounded-2xl mb-6 shadow-lg shadow-blue-900/50">
+                <Plus />
+              </div>
+              <h3 className="text-2xl font-black">Nova Viagem?</h3>
+              <p className="text-slate-400 text-sm mt-2">
+                Clique abaixo para iniciar o fluxo de solicitação de diárias.
+              </p>
             </div>
-            <h3 className="text-2xl font-black">Nova Viagem?</h3>
-            <p className="text-slate-400 text-sm mt-2">
-              Clique abaixo para iniciar o fluxo de solicitação de diárias.
-            </p>
-          </div>
 
-          <Link
-            to="/app/solicitacoes"
-            className={`mt-8 w-full py-4 rounded-2xl font-black flex items-center justify-center gap-2 transition-all ${
-              isBlocked
-                ? "bg-slate-800 text-slate-500 cursor-not-allowed"
-                : "bg-white text-slate-900 hover:bg-blue-600 hover:text-white"
-            }`}
-            onClick={(e) => isBlocked && e.preventDefault()}>
-            {isBlocked ? <Lock size={16} /> : <Plus size={16} />}
-            {isBlocked ? "Bloqueado" : "Solicitar Diária"}
-          </Link>
-        </div>
+            <Link
+              to="/app/solicitacoes"
+              className={`mt-8 w-full py-4 rounded-2xl font-black flex items-center justify-center gap-2 transition-all ${
+                isBlocked
+                  ? "bg-slate-800 text-slate-500 cursor-not-allowed"
+                  : "bg-white text-slate-900 hover:bg-blue-600 hover:text-white"
+              }`}
+              onClick={(e) => isBlocked && e.preventDefault()}>
+              {isBlocked ? <Lock size={16} /> : <Plus size={16} />}
+              {isBlocked ? "Bloqueado" : "Solicitar Diária"}
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );

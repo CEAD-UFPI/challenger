@@ -4,17 +4,19 @@ import { useAuthStore } from "./store/authStore";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
+import ResetPassword from "./pages/ResetPassword";
 
 // --- IMPORTANTE: Importe as duas telas de solicitações ---
-import NewSolicitation from "./pages/movimentacoes/NewSolicitation"; // A tela do formulário (ajuste o caminho se necessário)
-import Solicitations from "./pages/movimentacoes/Solicitations"; // A tela da tabela/aprovação
+import NewSolicitation from "./pages/Movimentacoes/NewSolicitation"; // A tela do formulário (ajuste o caminho se necessário)
+import Solicitations from "./pages/Movimentacoes/Solicitations"; // A tela da tabela/aprovação
 
 import GenericCadastro from "./components/GenericCadastro";
 import Agents from "./pages/cadastros/Agents";
 import CompleteProfile from "./pages/Cadastros/CompleteProfile";
-import DailyValues from "./pages/cadastros/DailyValues";
-import Projects from "./pages/cadastros/Projects";
-import Solicitants from "./pages/cadastros/Solicitants";
+import DailyValues from "./pages/Cadastros/DailyValues";
+import Projects from "./pages/Cadastros/Projects";
+import Solicitants from "./pages/Cadastros/Solicitants";
+import Profile from "./pages/Cadastros/Profile";
 
 import { Building2, GraduationCap, MapPin, Target } from "lucide-react";
 
@@ -36,6 +38,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Login />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/completar-registo" element={<CompleteProfile />} />
         <Route
           path="/app"
@@ -45,6 +48,7 @@ export default function App() {
             </ProtectedRoute>
           }>
           <Route index element={<Dashboard />} />
+          <Route path="perfil" element={<Profile />} />
 
           {/* --- AS DUAS ROTAS DE SOLICITAÇÃO AQUI 👇 --- */}
           <Route path="solicitacoes" element={<Solicitations />} />

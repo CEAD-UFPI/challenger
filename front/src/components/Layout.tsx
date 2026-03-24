@@ -18,7 +18,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 
 export default function Layout() {
-  const { user, activeRole, switchRole, logout } = useAuthStore();
+  const { user, activeRole, logout } = useAuthStore();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -27,34 +27,24 @@ export default function Layout() {
     navigate("/");
   };
 
-  // --- ATUALIZAÇÃO DA LÓGICA DE PERMISSÃO ---
   const hasPermission = (allowedRoles: string[]) => {
     if (allowedRoles.includes("ALL")) return true;
-
-    // Se a role ativa estiver na lista permitida, OK
     if (allowedRoles.includes(activeRole)) return true;
-
-    // REGRA DE OURO: Se o usuário é Solicitante, ele ganha acesso a itens marcados como 'SOLICITANTE'
-    // mesmo que a role ativa dele seja apenas 'AGENTE'
     if (user?.isSolicitant && allowedRoles.includes("SOLICITANTE")) return true;
-
     return false;
   };
 
   const menuGroups = [
     {
       title: "Cadastros",
-      // Adicionamos 'SOLICITANTE' aqui para liberar o grupo para eles
       allowedRoles: ["ADMIN", "FINANCEIRO", "SOLICITANTE"],
       items: [
         {
           label: "Agentes",
           path: "/app/cadastros/agentes",
           icon: Users,
-          // Agora Agentes podem ser vistos por solicitantes (mas filtrado no back)
           allowed: ["ADMIN", "FINANCEIRO", "SOLICITANTE"],
         },
-        // Itens que só Admin/Financeiro veem (Solicitante NÃO VÊ)
         {
           label: "Bancos",
           path: "/app/cadastros/bancos",
@@ -84,13 +74,13 @@ export default function Layout() {
           path: "/app/cadastros/projetos",
           icon: Briefcase,
           allowed: ["ADMIN", "FINANCEIRO", "SOLICITANTE"],
-        }, // Talvez solicitante possa ver projetos
+        },
         {
           label: "Solicitantes",
           path: "/app/cadastros/solicitantes",
           icon: UserCog,
           allowed: ["ADMIN"],
-        }, // Só admin cria solicitantes
+        },
         {
           label: "Tipos de Diária",
           path: "/app/cadastros/tipos-diaria",
@@ -110,7 +100,7 @@ export default function Layout() {
           allowed: [
             "ADMIN",
             "DIRECAO",
-            "SOLICITANTE", // Importante estar aqui
+            "SOLICITANTE",
             "FINANCEIRO",
             "COORDENACAO",
           ],
@@ -119,6 +109,19 @@ export default function Layout() {
           label: "Relatórios de Viagem",
           path: "/app/relatorios",
           icon: FileCheck,
+          allowed: ["ALL"],
+        },
+      ],
+    },
+    // 👇 NOVO GRUPO ADICIONADO AQUI
+    {
+      title: "Minha Conta",
+      allowedRoles: ["ALL"],
+      items: [
+        {
+          label: "Meu Perfil",
+          path: "/app/perfil",
+          icon: User,
           allowed: ["ALL"],
         },
       ],
@@ -153,7 +156,6 @@ export default function Layout() {
                 </p>
                 <div className="space-y-1">
                   {group.items.map((item: any, itemIdx) => {
-                    // Checa permissão item a item
                     if (item.allowed && !hasPermission(item.allowed))
                       return null;
 
@@ -187,9 +189,10 @@ export default function Layout() {
               <p className="text-sm font-bold truncate">
                 {user?.name || user?.username}
               </p>
-              {/* Exibe o cargo OU 'Solicitante' */}
               <p className="text-[10px] text-blue-400 font-black uppercase">
-                {user?.isSolicitant ? "SOLICITANTE" : activeRole}
+                {user?.isSolicitant
+                  ? "SOLICITANTE"
+                  : activeRole || user?.roles?.[0] || "AGENTE"}
               </p>
             </div>
           </div>
