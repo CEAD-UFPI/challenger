@@ -16,6 +16,7 @@ import DailyValues from "./pages/Cadastros/DailyValues";
 import Projects from "./pages/Cadastros/Projects";
 import ProjectFinancialEdit from "./pages/Cadastros/ProjectFinancialEdit";
 import NaturezasDespesa from "./pages/Cadastros/NaturezasDespesa";
+import RelatorioGastosProjeto from "./pages/Cadastros/RelatorioGastosProjeto";
 import Solicitants from "./pages/Cadastros/Solicitants";
 
 import { Building2, GraduationCap, MapPin, Target } from "lucide-react";
@@ -59,6 +60,10 @@ export default function App() {
 
           <Route path="cadastros/agentes" element={<Agents />} />
           {/* Rota dinâmica antes da estática: evita conflito de matching em alguns casos */}
+          <Route
+            path="cadastros/relatorio-gastos-projeto"
+            element={<RelatorioGastosProjeto />}
+          />
           <Route
             path="cadastros/projetos/:projectId"
             element={<ProjectFinancialEdit />}

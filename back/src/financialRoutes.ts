@@ -220,6 +220,74 @@ export function registerFinancialRoutes(app: Express, prisma: PrismaClient) {
     }
   });
 
+  app.post("/api/naturezas-despesa/importar-csv", async (req: Request, res: Response) => {
+    const user = getUser(req);
+    if (!user) return res.status(401).json({ error: "Não autorizado" });
+    if (!isAdminOrFinanceiro(user)) return res.status(403).json({ error: "Sem permissão." });
+    const { csv } = req.body as { csv?: string };
+    if (!csv || typeof csv !== "string") {
+      return res.status(400).json({ error: "Envie o campo 'csv' (texto) no corpo JSON." });
+    }
+    const lines = csv
+      .replace(/^\uFEFF/, "")
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    if (lines.length < 2) {
+      return res.status(400).json({ error: "CSV deve ter cabeçalho e pelo menos uma linha de dados." });
+    }
+    const delim = lines[0].split(";").length >= lines[0].split(",").length ? ";" : ",";
+    const headerCells = lines[0].split(delim).map((c) => c.trim().toLowerCase().replace(/^"|"$/g, ""));
+    const idx = (name: string) => headerCells.indexOf(name);
+    const iCod = idx("codigo");
+    const iNome = idx("nome");
+    const iTipo = idx("tipo");
+    const iDesc = idx("descricao");
+    if (iCod < 0 || iNome < 0 || iTipo < 0) {
+      return res.status(400).json({
+        error: "Cabeçalho obrigatório: codigo, nome, tipo (colunas opcionais: descricao).",
+      });
+    }
+    let criadas = 0;
+    let ignoradas = 0;
+    const erros: string[] = [];
+    for (let r = 1; r < lines.length; r++) {
+      const cells = lines[r].split(delim).map((c) => c.trim().replace(/^"|"$/g, ""));
+      const codigo = cells[iCod]?.trim();
+      const nome = cells[iNome]?.trim();
+      const tipoRaw = cells[iTipo]?.trim().toUpperCase();
+      const descricao = iDesc >= 0 ? cells[iDesc]?.trim() || null : null;
+      if (!codigo || !nome) {
+        erros.push(`Linha ${r + 1}: código e nome são obrigatórios.`);
+        continue;
+      }
+      const tipo = tipoRaw === "RENDIMENTO" ? "RENDIMENTO" : tipoRaw === "NOTA" ? "NOTA" : null;
+      if (!tipo) {
+        erros.push(`Linha ${r + 1}: tipo deve ser NOTA ou RENDIMENTO (recebido: ${tipoRaw}).`);
+        continue;
+      }
+      try {
+        await prisma.expenseNature.create({
+          data: {
+            codigo,
+            nome,
+            tipo,
+            descricao,
+          },
+        });
+        criadas++;
+      } catch (e: any) {
+        if (e.code === "P2002") {
+          ignoradas++;
+          erros.push(`Linha ${r + 1}: código "${codigo}" já existe — ignorada.`);
+        } else {
+          erros.push(`Linha ${r + 1}: ${e.message || "erro ao inserir."}`);
+        }
+      }
+    }
+    res.status(201).json({ criadas, ignoradas, erros });
+  });
+
   // --- Projeto: detalhe + painel financeiro ---
   app.get("/api/projetos/:id", async (req: Request, res: Response) => {
     const user = getUser(req);
@@ -265,6 +333,72 @@ export function registerFinancialRoutes(app: Express, prisma: PrismaClient) {
     } catch (e) {
       res.status(400).json({ error: "Erro ao excluir projeto." });
     }
+  });
+
+  /** Relatório de gastos: todas as Ações de Execução do projeto com detalhe da natureza */
+  app.get("/api/projetos/:id/relatorio-gastos", async (req: Request, res: Response) => {
+    const user = getUser(req);
+    if (!user) return res.status(401).json({ error: "Não autorizado" });
+    if (!isAdminOrFinanceiro(user)) return res.status(403).json({ error: "Sem permissão." });
+    const projectId = Number(req.params.id);
+    const access = await assertProjectAccess(prisma, user, projectId, false);
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!project) return res.status(404).json({ error: "Projeto não encontrado." });
+
+    const acoes = await prisma.executionAction.findMany({
+      where: { projectId },
+      include: { expenseNature: true },
+      orderBy: [{ expenseNatureId: "asc" }, { id: "asc" }],
+    });
+
+    const totaisPorNaturezaMap = new Map<number, Prisma.Decimal>();
+    let totalGeral = new Prisma.Decimal(0);
+    for (const a of acoes) {
+      const v = dec(a.valor);
+      totalGeral = totalGeral.add(v);
+      const k = a.expenseNatureId;
+      totaisPorNaturezaMap.set(k, (totaisPorNaturezaMap.get(k) ?? new Prisma.Decimal(0)).add(v));
+    }
+
+    const totaisPorNatureza = [...totaisPorNaturezaMap.entries()].map(([expenseNatureId, total]) => {
+      const n = acoes.find((x) => x.expenseNatureId === expenseNatureId)?.expenseNature;
+      return {
+        expenseNatureId,
+        nome: n?.nome ?? "",
+        codigo: n?.codigo ?? "",
+        tipo: n?.tipo ?? "",
+        total: total.toString(),
+      };
+    });
+
+    res.json({
+      project: {
+        id: project.id,
+        nomeDoProjeto: project.nomeDoProjeto,
+        numTed: project.numTed,
+        contaCorrente: project.contaCorrente,
+        dtInicial: project.dtInicial,
+        dtFinal: project.dtFinal,
+        saldoOrcamentario: project.saldo.toString(),
+        courseId: project.courseId,
+      },
+      acoes: acoes.map((a) => ({
+        id: a.id,
+        descricao: a.descricao,
+        valor: a.valor.toString(),
+        natureza: {
+          id: a.expenseNature.id,
+          nome: a.expenseNature.nome,
+          codigo: a.expenseNature.codigo,
+          tipo: a.expenseNature.tipo,
+          descricao: a.expenseNature.descricao,
+        },
+      })),
+      totaisPorNatureza,
+      totalGeral: totalGeral.toString(),
+    });
   });
 
   app.get("/api/projetos/:id/financeiro", async (req: Request, res: Response) => {

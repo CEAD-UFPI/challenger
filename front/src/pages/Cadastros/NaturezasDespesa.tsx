@@ -1,6 +1,24 @@
 import React, { useEffect, useState } from "react";
 import api from "../../services/api";
-import { Layers, Plus, Trash2, Pencil } from "lucide-react";
+import { Download, FileUp, Layers, Plus, Trash2, Pencil } from "lucide-react";
+
+const NATUREZAS_CSV_SAMPLE = [
+  "codigo;nome;tipo;descricao",
+  "EX-NOTA-001;Exemplo despesa com nota fiscal;NOTA;Texto opcional da descrição",
+  "EX-REND-001;Exemplo rendimento;RENDIMENTO;",
+].join("\r\n");
+
+function downloadNaturezasCsvSample() {
+  const blob = new Blob(["\uFEFF", NATUREZAS_CSV_SAMPLE], {
+    type: "text/csv;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "modelo-naturezas-despesa.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 type Natureza = {
   id: number;
@@ -10,11 +28,16 @@ type Natureza = {
   tipo: "NOTA" | "RENDIMENTO";
 };
 
-const emptyForm = {
+const emptyForm: {
+  nome: string;
+  descricao: string;
+  codigo: string;
+  tipo: "NOTA" | "RENDIMENTO";
+} = {
   nome: "",
   descricao: "",
   codigo: "",
-  tipo: "NOTA" as const,
+  tipo: "NOTA",
 };
 
 export default function NaturezasDespesa() {
@@ -22,6 +45,7 @@ export default function NaturezasDespesa() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const load = async () => {
     try {
@@ -71,6 +95,28 @@ export default function NaturezasDespesa() {
       alert(err.response?.data?.error || "Erro ao salvar.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const importarCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    try {
+      const csv = await file.text();
+      const { data } = await api.post("/naturezas-despesa/importar-csv", { csv });
+      const msg = [
+        `Inseridas: ${data.criadas}`,
+        `Ignoradas (código duplicado): ${data.ignoradas}`,
+        ...(data.erros?.length ? ["\nAvisos:\n" + data.erros.join("\n")] : []),
+      ].join("\n");
+      alert(msg);
+      load();
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Erro na importação.");
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -174,6 +220,39 @@ export default function NaturezasDespesa() {
           </button>
         </div>
       </form>
+
+      <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-dashed border-indigo-200">
+        <h2 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+          <FileUp size={18} className="text-indigo-600" /> Importar CSV
+        </h2>
+        <p className="text-xs text-slate-600 mb-3">
+          Primeira linha: cabeçalho com colunas{" "}
+          <code className="bg-slate-100 px-1 rounded">codigo</code>,{" "}
+          <code className="bg-slate-100 px-1 rounded">nome</code>,{" "}
+          <code className="bg-slate-100 px-1 rounded">tipo</code> (NOTA ou RENDIMENTO), opcionalmente{" "}
+          <code className="bg-slate-100 px-1 rounded">descricao</code>. Separador{" "}
+          <strong>;</strong> ou <strong>,</strong>. Codigos duplicados são ignorados.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={downloadNaturezasCsvSample}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-800 text-sm font-bold hover:bg-indigo-100">
+            <Download size={18} />
+            Baixar modelo (.csv)
+          </button>
+          <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-bold cursor-pointer hover:bg-indigo-700">
+            {importing ? "A importar…" : "Escolher ficheiro .csv"}
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              disabled={importing}
+              onChange={importarCsv}
+            />
+          </label>
+        </div>
+      </div>
 
       <div className="bg-white rounded-[2rem] border border-slate-200 overflow-hidden">
         <table className="w-full text-sm">
