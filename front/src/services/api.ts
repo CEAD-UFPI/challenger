@@ -22,11 +22,18 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// --- 2. INTERCEPTOR DE RESPOSTA (O seu tratamento de erro global) ---
+// --- 2. INTERCEPTOR DE RESPOSTA ---
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Se der 401, o token pode ter expirado. Podemos até forçar o logout aqui depois!
+    const status = error.response?.status;
+    if (status === 401) {
+      useAuthStore.getState().logout();
+      if (window.location.pathname !== "/") {
+        window.location.assign("/?sessao=expirada");
+      }
+      return Promise.reject(error);
+    }
     console.error("[API Error]:", error.response?.data || error.message);
     return Promise.reject(error);
   },

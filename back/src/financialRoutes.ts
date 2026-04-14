@@ -149,6 +149,63 @@ async function assertProjectAccess(
   return { ok: false, status: 403, error: "Sem permissão." };
 }
 
+/** Valor monetário em célula CSV: aceita 1234.56 ou 1.234,56 (PT-BR). */
+function parseImportMoney(raw: string): { ok: true; value: Prisma.Decimal } | { ok: false } {
+  const t = raw.trim().replace(/\s/g, "");
+  if (!t) return { ok: false };
+  let s = t;
+  if (/^\d{1,3}(\.\d{3})*(,\d+)$/.test(t)) {
+    s = t.replace(/\./g, "").replace(",", ".");
+  } else if (t.includes(",") && !t.includes(".")) {
+    s = t.replace(",", ".");
+  }
+  try {
+    const value = new Prisma.Decimal(s);
+    return { ok: true, value };
+  } catch {
+    return { ok: false };
+  }
+}
+
+type ExecutionActionWithNature = Prisma.ExecutionActionGetPayload<{
+  include: { expenseNature: true };
+}>;
+
+async function createExecutionActionIfAllowed(
+  prisma: PrismaClient,
+  projectId: number,
+  expenseNatureId: number,
+  descricao: string,
+  valor: string | number | Prisma.Decimal,
+): Promise<{ ok: true; created: ExecutionActionWithNature } | { ok: false; error: string }> {
+  const valorDec = dec(valor);
+  if (valorDec.lt(0)) {
+    return { ok: false, error: "Valor não pode ser negativo." };
+  }
+  const limite = await limiteNatureza(prisma, projectId, expenseNatureId);
+  const committed = await committedByNature(prisma, projectId);
+  const com = committed.get(expenseNatureId) ?? new Prisma.Decimal(0);
+  const novoTotal = com.add(valorDec);
+  if (limite.lte(0) && valorDec.gt(0)) {
+    return {
+      ok: false,
+      error:
+        "Não existe Crédito Saldo alocado a esta Natureza de Despesa neste projeto (soma das linhas Crédito Saldo Natureza é zero). Inclua a natureza nas linhas de um Crédito Saldo antes de criar ações de execução.",
+    };
+  }
+  if (novoTotal.gt(limite)) {
+    return {
+      ok: false,
+      error: `Saldo por natureza (Crédito Saldo Natureza no projeto): ${limite.toFixed(2)}. Já comprometido em ações: ${com.toFixed(2)}. Novo valor: ${valorDec.toFixed(2)}. O total não pode ultrapassar o crédito-saldo desta natureza.`,
+    };
+  }
+  const created = await prisma.executionAction.create({
+    data: { projectId, expenseNatureId, descricao, valor: valorDec },
+    include: { expenseNature: true },
+  });
+  return { ok: true, created };
+}
+
 export function registerFinancialRoutes(app: Express, prisma: PrismaClient) {
   // --- Natureza de Despesa (catálogo) ---
   app.get("/api/naturezas-despesa", async (req: Request, res: Response) => {
@@ -314,7 +371,11 @@ export function registerFinancialRoutes(app: Express, prisma: PrismaClient) {
       if (dtFinal != null) data.dtFinal = new Date(dtFinal);
       if (contaCorrente != null) data.contaCorrente = contaCorrente;
       if (saldo != null) data.saldo = new Prisma.Decimal(saldo);
-      if (courseId !== undefined) data.courseId = courseId ? Number(courseId) : null;
+      if (courseId !== undefined) {
+        data.course = courseId
+          ? { connect: { id: Number(courseId) } }
+          : { disconnect: true };
+      }
       const item = await prisma.project.update({ where: { id }, data });
       res.json(item);
     } catch (e: any) {
@@ -786,28 +847,105 @@ export function registerFinancialRoutes(app: Express, prisma: PrismaClient) {
       descricao: string;
       valor: string | number;
     };
-    const valorDec = dec(valor);
-    const limite = await limiteNatureza(prisma, projectId, expenseNatureId);
-    const committed = await committedByNature(prisma, projectId);
-    const com = committed.get(expenseNatureId) ?? new Prisma.Decimal(0);
-    const novoTotal = com.add(valorDec);
-    if (limite.lte(0) && valorDec.gt(0)) {
-      return res.status(400).json({
-        error:
-          "Não existe Crédito Saldo alocado a esta Natureza de Despesa neste projeto (soma das linhas Crédito Saldo Natureza é zero). Inclua a natureza nas linhas de um Crédito Saldo antes de criar ações de execução.",
-      });
+    const result = await createExecutionActionIfAllowed(
+      prisma,
+      projectId,
+      expenseNatureId,
+      String(descricao ?? ""),
+      valor,
+    );
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    const created = result.created;
+    res.status(201).json({ ...created, valor: created.valor.toString() });
+  });
+
+  /**
+   * CSV: cabeçalho codigo;descricao;valor — codigo = Natureza de Despesa (catálogo).
+   * Linhas aplicadas em sequência (cada inserção atualiza o comprometido para as seguintes).
+   */
+  app.post("/api/projetos/:projectId/acoes-execucao/importar-csv", async (req: Request, res: Response) => {
+    const user = getUser(req);
+    if (!user) return res.status(401).json({ error: "Não autorizado" });
+    if (!isAdminOrFinanceiro(user)) return res.status(403).json({ error: "Sem permissão." });
+    const projectId = Number(req.params.projectId);
+    const access = await assertProjectAccess(prisma, user, projectId, true);
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+
+    const { csv } = req.body as { csv?: string };
+    if (!csv || typeof csv !== "string") {
+      return res.status(400).json({ error: "Envie o campo 'csv' (texto) no corpo JSON." });
     }
-    if (novoTotal.gt(limite)) {
+    const lines = csv
+      .replace(/^\uFEFF/, "")
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    if (lines.length < 2) {
+      return res.status(400).json({ error: "CSV deve ter cabeçalho e pelo menos uma linha de dados." });
+    }
+    const delim = lines[0].split(";").length >= lines[0].split(",").length ? ";" : ",";
+    const headerCells = lines[0].split(delim).map((c) => c.trim().toLowerCase().replace(/^"|"$/g, ""));
+    const idx = (name: string) => headerCells.indexOf(name);
+    const iCod = idx("codigo");
+    const iDesc = idx("descricao");
+    const iVal = idx("valor");
+    if (iCod < 0 || iDesc < 0 || iVal < 0) {
       return res.status(400).json({
-        error: `Saldo por natureza (Crédito Saldo Natureza no projeto): ${limite.toFixed(2)}. Já comprometido em ações: ${com.toFixed(2)}. Novo valor: ${valorDec.toFixed(2)}. O total não pode ultrapassar o crédito-saldo desta natureza.`,
+        error: "Cabeçalho obrigatório: codigo, descricao, valor (codigo = Natureza de Despesa).",
       });
     }
 
-    const created = await prisma.executionAction.create({
-      data: { projectId, expenseNatureId, descricao, valor: valorDec },
-      include: { expenseNature: true },
-    });
-    res.status(201).json({ ...created, valor: created.valor.toString() });
+    const erros: string[] = [];
+    let criadas = 0;
+
+    for (let r = 1; r < lines.length; r++) {
+      const cells = lines[r].split(delim).map((c) => c.trim().replace(/^"|"$/g, ""));
+      const codigoRaw = cells[iCod]?.trim();
+      const descricaoRaw = cells[iDesc]?.trim();
+      const valorRaw = cells[iVal]?.trim() ?? "";
+
+      if (!codigoRaw) {
+        erros.push(`Linha ${r + 1}: código da natureza é obrigatório — ação não inserida.`);
+        continue;
+      }
+      if (!descricaoRaw) {
+        erros.push(`Linha ${r + 1}: descrição é obrigatória — ação não inserida.`);
+        continue;
+      }
+      const parsed = parseImportMoney(valorRaw);
+      if (!parsed.ok) {
+        erros.push(`Linha ${r + 1}: valor inválido (${valorRaw || "vazio"}) — ação não inserida.`);
+        continue;
+      }
+      const valorDec = parsed.value;
+
+      const nature = await prisma.expenseNature.findUnique({
+        where: { codigo: codigoRaw },
+      });
+      if (!nature) {
+        erros.push(
+          `Linha ${r + 1}: ação não inserida — não existe natureza com código "${codigoRaw}" no catálogo.`,
+        );
+        continue;
+      }
+
+      const result = await createExecutionActionIfAllowed(
+        prisma,
+        projectId,
+        nature.id,
+        descricaoRaw,
+        valorDec,
+      );
+      if (!result.ok) {
+        erros.push(
+          `Linha ${r + 1}: ação não inserida (natureza "${codigoRaw}", ${descricaoRaw.slice(0, 40)}${descricaoRaw.length > 40 ? "…" : ""}, valor ${valorDec.toFixed(2)}). Motivo: ${result.error}`,
+        );
+        continue;
+      }
+      criadas++;
+    }
+
+    res.status(201).json({ criadas, erros });
   });
 
   app.patch("/api/acoes-execucao/:id", async (req: Request, res: Response) => {

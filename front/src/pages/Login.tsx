@@ -1,11 +1,13 @@
 import { Lock, User } from "lucide-react";
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 
 export default function Login() {
-  const { login, user } = useAuthStore();
+  const { login, user, isAuthenticated } = useAuthStore();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const sessaoExpirada = searchParams.get("sessao") === "expirada";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -13,8 +15,8 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (user) navigate("/app");
-  }, [user, navigate]);
+    if (isAuthenticated && user) navigate("/app");
+  }, [isAuthenticated, user, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,6 +101,12 @@ export default function Login() {
               />
             </div>
           </div>
+
+          {sessaoExpirada && (
+            <div className="p-3 bg-amber-50 text-amber-900 text-xs font-bold rounded-lg text-center border border-amber-200">
+              Sua sessão expirou ou não é mais válida. Entre novamente.
+            </div>
+          )}
 
           {error && (
             <div className="p-3 bg-red-50 text-red-600 text-xs font-bold rounded-lg text-center border border-red-100">

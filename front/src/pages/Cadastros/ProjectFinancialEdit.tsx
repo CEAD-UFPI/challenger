@@ -13,7 +13,24 @@ import {
   Plus,
   Pencil,
   Trash2,
+  FileUp,
+  Download,
 } from "lucide-react";
+
+function downloadAcoesExecucaoCsvSample(codigoNaturezaExemplo: string) {
+  const body = [
+    "codigo;descricao;valor",
+    `${codigoNaturezaExemplo};Exemplo: despesa vinculada à natureza;150,00`,
+    `${codigoNaturezaExemplo};Outra ação (mesma natureza);50.25`,
+  ].join("\r\n");
+  const blob = new Blob(["\uFEFF", body], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "modelo-acoes-execucao.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 type Line = {
   id: number;
@@ -94,6 +111,11 @@ export default function ProjectFinancialEdit() {
     creditId: number;
     line: Line;
   } | null>(null);
+  const [importingAcoes, setImportingAcoes] = useState(false);
+  const [acoesImportFeedback, setAcoesImportFeedback] = useState<{
+    criadas: number;
+    erros: string[];
+  } | null>(null);
 
   const load = useCallback(async () => {
     const res = await api.get(`/projetos/${pid}/financeiro`);
@@ -172,6 +194,29 @@ export default function ProjectFinancialEdit() {
       load();
     } catch (err: any) {
       alert(err.response?.data?.error || "Erro ao excluir.");
+    }
+  };
+
+  const importarAcoesCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !data?.permissoes.edicaoFinanceira) return;
+    setImportingAcoes(true);
+    setAcoesImportFeedback(null);
+    try {
+      const csv = await file.text();
+      const { data } = await api.post(`/projetos/${pid}/acoes-execucao/importar-csv`, {
+        csv,
+      });
+      setAcoesImportFeedback({
+        criadas: data.criadas ?? 0,
+        erros: Array.isArray(data.erros) ? data.erros : [],
+      });
+      await load();
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Erro na importação.");
+    } finally {
+      setImportingAcoes(false);
     }
   };
 
@@ -503,12 +548,75 @@ export default function ProjectFinancialEdit() {
         {openAcoes && (
           <div className="px-6 pb-6 space-y-4">
             {canEdit && (
-              <button
-                type="button"
-                onClick={() => setActionModal({ mode: "create" })}
-                className="flex items-center gap-2 bg-indigo-600 text-white font-bold py-2 px-4 rounded-xl text-sm">
-                <Plus size={16} /> Nova ação
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActionModal({ mode: "create" })}
+                  className="flex items-center gap-2 bg-indigo-600 text-white font-bold py-2 px-4 rounded-xl text-sm">
+                  <Plus size={16} /> Nova ação
+                </button>
+              </div>
+            )}
+            {canEdit && (
+              <div className="rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+                <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                  <FileUp size={16} className="text-indigo-600" /> Importar ações (CSV)
+                </h3>
+                <p className="text-xs text-slate-600">
+                  Cabeçalho:{" "}
+                  <code className="bg-white px-1 rounded border border-slate-200">codigo</code>,{" "}
+                  <code className="bg-white px-1 rounded border border-slate-200">descricao</code>,{" "}
+                  <code className="bg-white px-1 rounded border border-slate-200">valor</code> — o código é o da{" "}
+                  <strong>Natureza de Despesa</strong> (catálogo). Separador <strong>;</strong> ou{" "}
+                  <strong>,</strong>. Valores como <code className="bg-white px-1 rounded">150,00</code> ou{" "}
+                  <code className="bg-white px-1 rounded">1.234,56</code>. As linhas são processadas em ordem; cada
+                  linha respeita o saldo já comprometido pelas anteriores e pelas regras atuais do projeto.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      downloadAcoesExecucaoCsvSample(
+                        naturezas[0]?.codigo ?? "CODIGO_DA_NATUREZA",
+                      )
+                    }
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-indigo-200 bg-white text-indigo-800 text-xs font-bold hover:bg-indigo-50">
+                    <Download size={16} />
+                    Baixar modelo (.csv)
+                  </button>
+                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer hover:bg-indigo-700">
+                    {importingAcoes ? "A importar…" : "Escolher ficheiro .csv"}
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      className="hidden"
+                      disabled={importingAcoes}
+                      onChange={importarAcoesCsv}
+                    />
+                  </label>
+                </div>
+                {acoesImportFeedback && (
+                  <div
+                    className={`rounded-xl border p-3 text-sm ${
+                      acoesImportFeedback.erros.length
+                        ? "border-amber-200 bg-amber-50 text-amber-950"
+                        : "border-emerald-200 bg-emerald-50 text-emerald-950"
+                    }`}>
+                    <p className="font-bold">
+                      {acoesImportFeedback.criadas} ação(ões) inserida(s).
+                      {acoesImportFeedback.erros.length > 0 &&
+                        ` ${acoesImportFeedback.erros.length} linha(s) não inserida(s).`}
+                    </p>
+                    {acoesImportFeedback.erros.length > 0 && (
+                      <ul className="mt-2 max-h-48 overflow-y-auto text-xs font-mono space-y-1 list-disc pl-4">
+                        {acoesImportFeedback.erros.map((msg, i) => (
+                          <li key={i}>{msg}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
             <div className="overflow-x-auto border border-slate-200 rounded-xl">
               <table className="w-full text-sm">
