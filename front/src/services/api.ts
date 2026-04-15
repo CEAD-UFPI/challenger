@@ -11,22 +11,29 @@ const api = axios.create({
 // --- 1. INTERCEPTOR DE REQUISIÇÃO (O "Entregador de Crachá") ---
 // Antes de qualquer chamada para a API, ele roda esse código
 api.interceptors.request.use((config) => {
-  // Pega o token diretamente do estado global
-  const token = useAuthStore.getState().token;
+  // Evita dependência circular authStore ↔ api: fallback ao localStorage
+  const token =
+    useAuthStore.getState().token ?? localStorage.getItem("sdp_token");
 
   if (token) {
-    // Se tiver token, anexa no cabeçalho de Autorização
     config.headers.Authorization = `Bearer ${token}`;
   }
 
   return config;
 });
 
-// --- 2. INTERCEPTOR DE RESPOSTA (O seu tratamento de erro global) ---
+// --- 2. INTERCEPTOR DE RESPOSTA ---
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Se der 401, o token pode ter expirado. Podemos até forçar o logout aqui depois!
+    const status = error.response?.status;
+    if (status === 401) {
+      useAuthStore.getState().logout();
+      if (window.location.pathname !== "/") {
+        window.location.assign("/?sessao=expirada");
+      }
+      return Promise.reject(error);
+    }
     console.error("[API Error]:", error.response?.data || error.message);
     return Promise.reject(error);
   },

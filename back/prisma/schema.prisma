@@ -124,6 +124,12 @@ enum RefusalReason {
   OUTROS
 }
 
+/// Tipo da Natureza de Despesa (catálogo global)
+enum ExpenseNatureType {
+  NOTA
+  RENDIMENTO
+}
+
 // --- MODELS ---
 
 model User {
@@ -177,6 +183,11 @@ model User {
   xUsername        String?
   linkedinUsername String?
   profileImage     String?
+
+  /// Permissão dedicada: remanejar créditos entre naturezas (além de ADMIN)
+  podeRemanejarCredito Boolean @default(false)
+
+  creditReallocations CreditReallocation[]
 
   // Relacionamentos
   solicitationsCreated Solicitation[] @relation("Solicitante")
@@ -243,12 +254,100 @@ model Project {
   dtInicial     DateTime
   dtFinal       DateTime
   contaCorrente String
+  /// Saldo Orçamentário (referência do projeto, independente dos créditos)
   saldo         Decimal              @default(0) @db.Decimal(14, 2)
   details       SolicitationDetail[]
   course        Course?     @relation(fields: [courseId], references: [id])
   courseId      Int?
 
+  creditBalances    CreditBalance[]
+  executionActions  ExecutionAction[]
+
   @@map("projetos")
+}
+
+/// Natureza de Despesa — catálogo global
+model ExpenseNature {
+  id          Int               @id @default(autoincrement())
+  nome        String
+  descricao   String?
+  codigo      String            @unique
+  tipo        ExpenseNatureType
+
+  creditLines      CreditBalanceNature[]
+  executionActions ExecutionAction[]
+  reallocFrom      CreditReallocation[] @relation("ReallocSourceNature")
+  reallocTo        CreditReallocation[] @relation("ReallocDestNature")
+
+  @@map("naturezas_despesa")
+}
+
+/// Crédito Saldo
+model CreditBalance {
+  id             Int       @id @default(autoincrement())
+  dataCredito    DateTime
+  valor          Decimal   @db.Decimal(14, 2)
+  notaCredito    String?
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId Int
+
+  lines         CreditBalanceNature[]
+  reallocations CreditReallocation[]
+
+  @@map("creditos_saldo")
+}
+
+/// Partição do crédito por natureza
+model CreditBalanceNature {
+  id               Int     @id @default(autoincrement())
+  saldoNatureza    Decimal @db.Decimal(14, 2)
+
+  creditBalance   CreditBalance @relation(fields: [creditBalanceId], references: [id], onDelete: Cascade)
+  creditBalanceId Int
+
+  expenseNature   ExpenseNature @relation(fields: [expenseNatureId], references: [id])
+  expenseNatureId Int
+
+  @@unique([creditBalanceId, expenseNatureId])
+  @@map("creditos_saldo_natureza")
+}
+
+/// Ação de Execução (por projeto + natureza)
+model ExecutionAction {
+  id          Int     @id @default(autoincrement())
+  descricao   String
+  valor       Decimal @db.Decimal(14, 2)
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId Int
+
+  expenseNature   ExpenseNature @relation(fields: [expenseNatureId], references: [id])
+  expenseNatureId Int
+
+  @@map("acoes_execucao")
+}
+
+/// Remanejamento de Crédito (histórico)
+model CreditReallocation {
+  id          Int      @id @default(autoincrement())
+  valor       Decimal  @db.Decimal(14, 2)
+  observacao  String?
+  createdAt   DateTime @default(now())
+
+  creditBalance   CreditBalance @relation(fields: [creditBalanceId], references: [id], onDelete: Cascade)
+  creditBalanceId Int
+
+  sourceNature   ExpenseNature @relation("ReallocSourceNature", fields: [sourceNatureId], references: [id])
+  sourceNatureId Int
+
+  destNature   ExpenseNature @relation("ReallocDestNature", fields: [destNatureId], references: [id])
+  destNatureId Int
+
+  user   User? @relation(fields: [userId], references: [id])
+  userId Int?
+
+  @@map("remanejamentos_credito")
 }
 
 model Destination {

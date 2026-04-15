@@ -1,9 +1,14 @@
+import React, { useEffect, useState } from "react";
 import {
   Banknote,
+  BarChart3,
   Briefcase,
   Building2,
+  ChevronDown,
+  ChevronRight,
   FileCheck,
   GraduationCap,
+  Layers,
   LayoutDashboard,
   LogOut,
   MapPin,
@@ -17,10 +22,58 @@ import {
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 
+function isActiveProjetosItem(path: string, pathname: string) {
+  if (pathname === path) return true;
+  if (
+    path === "/app/cadastros/projetos" &&
+    /^\/app\/cadastros\/projetos\/\d+$/.test(pathname)
+  )
+    return true;
+  return false;
+}
+
+const projetosSubItems: {
+  label: string;
+  path: string;
+  icon: typeof Briefcase;
+  allowed: string[];
+}[] = [
+  {
+    label: "Projetos",
+    path: "/app/cadastros/projetos",
+    icon: Briefcase,
+    allowed: ["ADMIN", "FINANCEIRO", "SOLICITANTE"],
+  },
+  {
+    label: "Naturezas de despesa",
+    path: "/app/cadastros/naturezas-despesa",
+    icon: Layers,
+    allowed: ["ADMIN", "FINANCEIRO"],
+  },
+  {
+    label: "Relatório de gastos",
+    path: "/app/cadastros/relatorio-gastos-projeto",
+    icon: BarChart3,
+    allowed: ["ADMIN", "FINANCEIRO"],
+  },
+];
+
 export default function Layout() {
-  const { user, activeRole, switchRole, logout } = useAuthStore();
+  const { user, activeRole, logout } = useAuthStore();
   const location = useLocation();
   const navigate = useNavigate();
+  const [projetosOpen, setProjetosOpen] = useState(true);
+
+  useEffect(() => {
+    const p = location.pathname;
+    if (
+      p.startsWith("/app/cadastros/projetos") ||
+      p === "/app/cadastros/naturezas-despesa" ||
+      p === "/app/cadastros/relatorio-gastos-projeto"
+    ) {
+      setProjetosOpen(true);
+    }
+  }, [location.pathname]);
 
   const handleLogout = () => {
     logout();
@@ -80,12 +133,6 @@ export default function Layout() {
           allowed: ["ADMIN", "FINANCEIRO"],
         },
         {
-          label: "Projetos",
-          path: "/app/cadastros/projetos",
-          icon: Briefcase,
-          allowed: ["ADMIN", "FINANCEIRO", "SOLICITANTE"],
-        }, // Talvez solicitante possa ver projetos
-        {
           label: "Solicitantes",
           path: "/app/cadastros/solicitantes",
           icon: UserCog,
@@ -143,6 +190,52 @@ export default function Layout() {
         </div>
 
         <nav className="flex-1 px-4 space-y-6 pb-6">
+          {hasPermission(["ADMIN", "FINANCEIRO", "SOLICITANTE"]) && (
+            <div>
+              <p className="px-4 text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">
+                Projetos
+              </p>
+              <button
+                type="button"
+                onClick={() => setProjetosOpen(!projetosOpen)}
+                className="flex w-full items-center justify-between gap-2 px-4 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white text-sm font-bold">
+                <span className="flex items-center gap-3">
+                  <Briefcase size={16} />
+                  Menu Projetos
+                </span>
+                {projetosOpen ? (
+                  <ChevronDown size={18} />
+                ) : (
+                  <ChevronRight size={18} />
+                )}
+              </button>
+              {projetosOpen && (
+                <div className="mt-1 ml-2 space-y-0.5 border-l-2 border-slate-700 pl-3">
+                  {projetosSubItems.map((item, itemIdx) => {
+                    if (!hasPermission(item.allowed)) return null;
+                    const active = isActiveProjetosItem(
+                      item.path,
+                      location.pathname,
+                    );
+                    return (
+                      <Link
+                        key={itemIdx}
+                        to={item.path}
+                        className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all font-medium text-sm ${
+                          active
+                            ? "bg-blue-600 text-white shadow-md"
+                            : "text-slate-400 hover:text-white hover:bg-slate-800"
+                        }`}>
+                        <item.icon size={16} />
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {menuGroups.map((group, groupIdx) => {
             if (!hasPermission(group.allowedRoles)) return null;
 
