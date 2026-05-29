@@ -107,11 +107,10 @@ class SolicitationService {
         details: {
           create: agentIds.map((agentId: number) => ({
             agentId: agentId,
-            projetoId: Number(fields.projetoId),
-            tipoDiariaId: Number(fields.tipoDiariaId),
+            projectId: Number(fields.projetoId),
+            dailyRateTypeId: Number(fields.tipoDiariaId),
             objectiveId: Number(fields.objectiveId),
             qtdDiarias: fields.qtdDiarias > 3.5 ? 3.5 : fields.qtdDiarias,
-            valorDiarias: 0,
           })),
         },
       },
@@ -410,7 +409,6 @@ app.post("/api/solicitantes", async (req, res) => {
 
 app.delete("/api/solicitantes/:id", async (req, res) => {
   try {
-    await prisma.user.delete({ where: { id: Number(req.params.id) } }); // Corrigido para deletar da tabela correta se necessário, ou manter conforme a regra de negócio. (Seu código original de solicitantes tinha prisma.solicitant.delete, mas note que mantive igual o seu exceto o erro aqui que eu identifiquei. Vamos deixar o prisma.solicitant.delete)
     await prisma.solicitant.delete({ where: { id: Number(req.params.id) } });
     res.json({ success: true });
   } catch (e) {
