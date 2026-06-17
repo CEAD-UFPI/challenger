@@ -2,7 +2,8 @@ import { PrismaClient } from "@prisma/client";
 import { sendConfirmationEmail } from "./services/emailService";
 import bcrypt from "bcryptjs";
 import cors from "cors";
-import express, { Request, Response } from "express";
+import "dotenv/config";
+import express, { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 
 // =============================================================
@@ -10,7 +11,7 @@ import jwt from "jsonwebtoken";
 // =============================================================
 const prisma = new PrismaClient();
 const app = express();
-const JWT_SECRET = "segredo-super-secreto-mude-em-producao";
+const JWT_SECRET = process.env.JWT_SECRET || "segredo-super-secreto-mude-em-producao";
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
@@ -31,41 +32,71 @@ const getUserFromRequest = (req: Request) => {
   }
 };
 
+const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
+  const user = getUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: "Não autorizado" });
+  (req as any).user = user;
+  next();
+};
+
+const roleMiddleware = (allowedRoles: string[]) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ error: "Não autorizado" });
+    const hasRole = user.roles.some((role: string) =>
+      allowedRoles.includes(role),
+    );
+    if (!hasRole) return res.status(403).json({ error: "Acesso negado" });
+    next();
+  };
+};
+
 // Gerador de CRUD Automático (Apenas para tabelas simples sem regras complexas)
 const createCrudRoutes = (modelName: string, model: any) => {
   // Listar
-  app.get(`/api/${modelName}`, async (req, res) => {
+  app.get(`/api/${modelName}`, authMiddleware, async (req, res) => {
     try {
       const items = await model.findMany();
       res.json(items);
     } catch (e) {
       console.error(`Erro ao listar ${modelName}:`, e);
-      res.status(500).json({ error: "Erro interno ao listar" });
+      res.status(500).json({ error: "Erro interno ao processar sua solicitação." });
     }
   });
 
   // Criar
-  app.post(`/api/${modelName}`, async (req, res) => {
-    try {
-      const item = await model.create({ data: req.body });
-      res.status(201).json(item);
-    } catch (e: any) {
-      if (e.code === "P2002")
-        return res.status(400).json({ error: "Registro duplicado." });
-      console.error(`Erro ao criar em ${modelName}:`, e);
-      res.status(400).json({ error: "Erro ao criar. Verifique os dados." });
-    }
-  });
+  app.post(
+    `/api/${modelName}`,
+    authMiddleware,
+    roleMiddleware(["ADMIN", "FINANCEIRO", "COORDENACAO"]),
+    async (req, res) => {
+      try {
+        const item = await model.create({ data: req.body });
+        res.status(201).json(item);
+      } catch (e: any) {
+        if (e.code === "P2002")
+          return res.status(400).json({ error: "Registro duplicado." });
+        console.error(`Erro ao criar em ${modelName}:`, e);
+        res.status(400).json({ error: "Erro ao processar sua solicitação." });
+      }
+    },
+  );
 
   // Deletar
-  app.delete(`/api/${modelName}/:id`, async (req, res) => {
-    try {
-      await model.delete({ where: { id: Number(req.params.id) } });
-      res.json({ success: true });
-    } catch (e) {
-      res.status(400).json({ error: "Erro ao deletar" });
-    }
-  });
+  app.delete(
+    `/api/${modelName}/:id`,
+    authMiddleware,
+    roleMiddleware(["ADMIN"]),
+    async (req, res) => {
+      try {
+        await model.delete({ where: { id: Number(req.params.id) } });
+        res.json({ success: true });
+      } catch (e) {
+        console.error(`Erro ao deletar em ${modelName}:`, e);
+        res.status(400).json({ error: "Erro ao processar sua solicitação." });
+      }
+    },
+  );
 };
 
 // =============================================================
@@ -95,26 +126,28 @@ class SolicitationService {
     const { requesterId, agentIds, ...fields } = data;
     await this.checkBlocklist(agentIds);
 
-    return await prisma.solicitation.create({
-      data: {
-        requesterId,
-        motivoSolicitacao: fields.motivo,
-        origem: fields.origem,
-        destino: fields.destino,
-        dataIda: new Date(fields.dataIda),
-        dataVolta: new Date(fields.dataVolta),
-        status: "AGUARDANDO_DIRECAO",
-        details: {
-          create: agentIds.map((agentId: number) => ({
-            agentId: agentId,
-            projetoId: Number(fields.projetoId),
-            tipoDiariaId: Number(fields.tipoDiariaId),
-            objectiveId: Number(fields.objectiveId),
-            qtdDiarias: fields.qtdDiarias > 3.5 ? 3.5 : fields.qtdDiarias,
-            valorDiarias: 0,
-          })),
+    return await prisma.$transaction(async (tx) => {
+      return await tx.solicitation.create({
+        data: {
+          requesterId,
+          motivoSolicitacao: fields.motivo,
+          origem: fields.origem,
+          destino: fields.destino,
+          dataIda: new Date(fields.dataIda),
+          dataVolta: new Date(fields.dataVolta),
+          status: "AGUARDANDO_DIRECAO",
+          details: {
+            create: agentIds.map((agentId: number) => ({
+              agentId: agentId,
+              projetoId: Number(fields.projetoId),
+              tipoDiariaId: Number(fields.tipoDiariaId),
+              objectiveId: Number(fields.objectiveId),
+              qtdDiarias: fields.qtdDiarias > 3.5 ? 3.5 : fields.qtdDiarias,
+              valorDiarias: 0,
+            })),
+          },
         },
-      },
+      });
     });
   }
 
@@ -165,6 +198,10 @@ class SolicitationService {
 app.post("/api/login", async (req: Request, res: Response) => {
   const { email, password } = req.body;
   try {
+    if (!email || !password) {
+      return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
+    }
+
     const user = await prisma.user.findUnique({
       where: { email },
       include: { solicitantProfile: true },
@@ -176,11 +213,9 @@ app.post("/api/login", async (req: Request, res: Response) => {
 
     // Impede o login se o usuário não finalizou o cadastro ou foi bloqueado
     if (user.status !== "ATIVO") {
-      return res
-        .status(403)
-        .json({
-          error: "Sua conta está pendente de ativação ou foi bloqueada.",
-        });
+      return res.status(403).json({
+        error: "Sua conta está pendente de ativação ou foi bloqueada.",
+      });
     }
 
     const isSolicitant =
@@ -213,14 +248,14 @@ app.post("/api/login", async (req: Request, res: Response) => {
       token,
     });
   } catch (error) {
-    return res.status(500).json({ error: "Erro interno" });
+    console.error("Erro no login:", error);
+    return res.status(500).json({ error: "Erro interno no servidor." });
   }
 });
 
 // Listar Usuários (Com filtro de Curso)
-app.get("/api/users", async (req, res) => {
-  const currentUser = getUserFromRequest(req);
-  if (!currentUser) return res.status(401).json({ error: "Não autorizado" });
+app.get("/api/users", authMiddleware, async (req, res) => {
+  const currentUser = (req as any).user;
 
   const isSuperUser = currentUser.roles.some((r: string) =>
     ["ADMIN", "FINANCEIRO", "DIRECAO"].includes(r),
@@ -232,17 +267,22 @@ app.get("/api/users", async (req, res) => {
     whereClause = { courseId: currentUser.courseId };
   }
 
-  const users = await prisma.user.findMany({
-    where: whereClause,
-    include: { course: { select: { nome: true } } },
-  });
+  try {
+    const users = await prisma.user.findMany({
+      where: whereClause,
+      include: { course: { select: { nome: true } } },
+    });
 
-  const safeUsers = users.map((u) => {
-    const { passwordHash, ...rest } = u;
-    return rest;
-  });
+    const safeUsers = users.map((u) => {
+      const { passwordHash, ...rest } = u;
+      return rest;
+    });
 
-  res.json(safeUsers);
+    res.json(safeUsers);
+  } catch (error) {
+    console.error("Erro ao listar usuários:", error);
+    res.status(500).json({ error: "Erro interno ao processar sua solicitação." });
+  }
 });
 
 // -------------------------------------------------------------
@@ -250,7 +290,7 @@ app.get("/api/users", async (req, res) => {
 // -------------------------------------------------------------
 
 // 1. Criar Usuário Manualmente (Admin/Gestor cria e o sistema envia e-mail)
-app.post("/api/users", async (req, res) => {
+app.post("/api/users", authMiddleware, roleMiddleware(["ADMIN", "COORDENACAO"]), async (req, res) => {
   try {
     const { cpf, email, role, courseId, ...userData } = req.body;
     const cleanCpf = cpf.replace(/\D/g, "");
@@ -367,7 +407,7 @@ app.post("/api/users/completar-cadastro", async (req, res) => {
 });
 
 // Deletar Usuário
-app.delete("/api/users/:id", async (req, res) => {
+app.delete("/api/users/:id", authMiddleware, roleMiddleware(["ADMIN"]), async (req, res) => {
   try {
     await prisma.user.delete({ where: { id: Number(req.params.id) } });
     res.json({ success: true });
@@ -380,7 +420,7 @@ app.delete("/api/users/:id", async (req, res) => {
 // 5. ROTAS DE SOLICITANTES (Vínculo User <-> Curso)
 // =============================================================
 
-app.get("/api/solicitantes", async (req, res) => {
+app.get("/api/solicitantes", authMiddleware, async (req, res) => {
   try {
     const items = await prisma.solicitant.findMany({
       include: {
@@ -394,7 +434,7 @@ app.get("/api/solicitantes", async (req, res) => {
   }
 });
 
-app.post("/api/solicitantes", async (req, res) => {
+app.post("/api/solicitantes", authMiddleware, roleMiddleware(["ADMIN"]), async (req, res) => {
   try {
     const { userId, courseId } = req.body;
     const item = await prisma.solicitant.create({
@@ -408,9 +448,8 @@ app.post("/api/solicitantes", async (req, res) => {
   }
 });
 
-app.delete("/api/solicitantes/:id", async (req, res) => {
+app.delete("/api/solicitantes/:id", authMiddleware, roleMiddleware(["ADMIN"]), async (req, res) => {
   try {
-    await prisma.user.delete({ where: { id: Number(req.params.id) } }); // Corrigido para deletar da tabela correta se necessário, ou manter conforme a regra de negócio. (Seu código original de solicitantes tinha prisma.solicitant.delete, mas note que mantive igual o seu exceto o erro aqui que eu identifiquei. Vamos deixar o prisma.solicitant.delete)
     await prisma.solicitant.delete({ where: { id: Number(req.params.id) } });
     res.json({ success: true });
   } catch (e) {
@@ -440,9 +479,8 @@ app.get("/api/projetos", async (req, res) => {
   res.json(items);
 });
 
-app.post("/api/projetos", async (req, res) => {
-  const currentUser = getUserFromRequest(req);
-  if (!currentUser) return res.status(401).json({ error: "Não autorizado" });
+app.post("/api/projetos", authMiddleware, roleMiddleware(["ADMIN", "FINANCEIRO", "COORDENACAO"]), async (req, res) => {
+  const currentUser = (req as any).user;
 
   try {
     const courseIdToSave = req.body.courseId || currentUser.courseId;
@@ -463,9 +501,8 @@ app.post("/api/projetos", async (req, res) => {
 // =============================================================
 
 // Listar (Com filtro por Curso)
-app.get("/api/solicitacoes", async (req, res) => {
-  const currentUser = getUserFromRequest(req);
-  if (!currentUser) return res.status(401).json({ error: "Não autorizado" });
+app.get("/api/solicitacoes", authMiddleware, async (req, res) => {
+  const currentUser = (req as any).user;
 
   const isSuperUser = currentUser.roles.some((r: string) =>
     ["ADMIN", "FINANCEIRO", "DIRECAO"].includes(r),
@@ -493,19 +530,23 @@ app.get("/api/solicitacoes", async (req, res) => {
 });
 
 // Criar
-app.post("/api/solicitacoes", async (req, res) => {
+app.post("/api/solicitacoes", authMiddleware, async (req, res) => {
   try {
-    const result = await SolicitationService.create(req.body);
+    const result = await SolicitationService.create({
+      ...req.body,
+      requesterId: (req as any).user.id,
+    });
     res.status(201).json(result);
   } catch (err: any) {
+    console.error("Erro ao criar solicitação:", err);
     res
       .status(err.message.includes("Bloqueado") ? 403 : 400)
-      .json({ error: err.message });
+      .json({ error: err.message || "Erro ao processar sua solicitação." });
   }
 });
 
 // Atualizar Status
-app.patch("/api/solicitacoes/:id/status", async (req, res) => {
+app.patch("/api/solicitacoes/:id/status", authMiddleware, async (req, res) => {
   try {
     const result = await SolicitationService.updateStatus(
       Number(req.params.id),
@@ -522,9 +563,8 @@ app.patch("/api/solicitacoes/:id/status", async (req, res) => {
 // 8. ROTAS DE RELATÓRIOS (Com Filtro de Segurança)
 // =============================================================
 
-app.get("/api/relatorios", async (req, res) => {
-  const currentUser = getUserFromRequest(req);
-  if (!currentUser) return res.status(401).json({ error: "Não autorizado" });
+app.get("/api/relatorios", authMiddleware, async (req, res) => {
+  const currentUser = (req as any).user;
 
   const isSuperUser = currentUser.roles.some((r: string) =>
     ["ADMIN", "FINANCEIRO", "FADEX"].includes(r),

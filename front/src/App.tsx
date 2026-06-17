@@ -6,15 +6,15 @@ import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 
 // --- IMPORTANTE: Importe as duas telas de solicitações ---
-import NewSolicitation from "./pages/movimentacoes/NewSolicitation"; // A tela do formulário (ajuste o caminho se necessário)
-import Solicitations from "./pages/movimentacoes/Solicitations"; // A tela da tabela/aprovação
+import NewSolicitation from "./pages/Movimentacoes/NewSolicitation"; // A tela do formulário (ajuste o caminho se necessário)
+import Solicitations from "./pages/Movimentacoes/Solicitations"; // A tela da tabela/aprovação
 
 import GenericCadastro from "./components/GenericCadastro";
-import Agents from "./pages/cadastros/Agents";
+import Agents from "./pages/Cadastros/Agents";
 import CompleteProfile from "./pages/Cadastros/CompleteProfile";
-import DailyValues from "./pages/cadastros/DailyValues";
-import Projects from "./pages/cadastros/Projects";
-import Solicitants from "./pages/cadastros/Solicitants";
+import DailyValues from "./pages/Cadastros/DailyValues";
+import Projects from "./pages/Cadastros/Projects";
+import Solicitants from "./pages/Cadastros/Solicitants";
 
 import { Building2, GraduationCap, MapPin, Target } from "lucide-react";
 

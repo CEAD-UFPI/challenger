@@ -11,13 +11,13 @@ export const sendConfirmationEmail = async (
     host: process.env.SMTP_HOST || "sandbox.smtp.mailtrap.io",
     port: Number(process.env.SMTP_PORT) || 2525,
     auth: {
-      user: process.env.SMTP_USER || "adicione_seu_user_aqui",
-      pass: process.env.SMTP_PASS || "adicione_sua_pass_aqui",
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
     },
   });
 
   // O link que o agente vai clicar (vai direcionar para uma nova tela no frontend)
-  const confirmationLink = `http://localhost:5173/completar-registo?token=${temporaryToken}`;
+  const confirmationLink = `${process.env.FRONTEND_URL || "http://localhost:5173"}/completar-registo?token=${temporaryToken}`;
 
   const mailOptions = {
     from: '"Challenger CEAD" <nao-responder@cead.ufpi.br>',
