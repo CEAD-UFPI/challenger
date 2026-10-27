@@ -1,0 +1,12 @@
+[Unit]
+Description=Restringe a porta 5433 (Challenger DB) ao servidor de aplicacao
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/docker-user-firewall.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

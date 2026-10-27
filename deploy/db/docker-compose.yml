@@ -1,0 +1,25 @@
+# Banco de dados de homologação/produção — servidor 10.42.90.242
+# Instalado em ~/cead-diarias-db (veja docs/INSTALACAO.md, Parte A).
+# O .env ao lado deste arquivo define POSTGRES_USER, POSTGRES_PASSWORD e POSTGRES_DB.
+# Porta 5433 porque a 5432 já é usada pelo banco da OLICMAT na mesma máquina.
+name: cead-diarias
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: cead_diarias_db
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "10.42.90.242:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+    name: cead_diarias_pgdata

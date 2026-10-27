@@ -1,357 +1,446 @@
 # Roteiro de Instalação — Challenger (Sistema de Diárias e Passagens)
 
-A instalação é dividida em duas partes independentes:
+## Visão geral do ambiente
 
-| Parte | Onde roda | O que contém |
-|---|---|---|
-| **A. Banco de dados** | Servidor de BD | PostgreSQL 15 |
-| **B. Aplicação** | Servidor de aplicação | API Node.js (`back/`) + Frontend React estático (`front/`) servido pelo Nginx |
-
-As duas partes podem ficar na mesma máquina. Nesse caso, use `localhost` como host do banco.
+| Servidor | IP | Função | Situação |
+|---|---|---|---|
+| `cead-diarias-homologacao` | **10.42.90.242** | Banco de dados (PostgreSQL 15 em Docker, porta **5433**) | ✅ Instalado |
+| Servidor de aplicação | **10.42.90.243** | API Node.js (PM2) + Frontend (Nginx) | ⏳ Parte B deste roteiro |
 
 ```
- Navegador ──HTTPS──▶ Nginx (servidor de aplicação)
-                        ├── /        → arquivos estáticos do front (front/dist)
-                        └── /api/*   → API Node (porta 3000, PM2)
-                                          │
-                                          └──TCP 5432──▶ PostgreSQL (servidor de BD)
+ Navegador ──HTTP──▶ Nginx :80 (10.42.90.243)
+                      ├── /        → front/dist (arquivos estáticos)
+                      └── /api/*   → API Node :3000 (PM2, só local)
+                                        │
+                                        └──TCP 5433──▶ PostgreSQL (10.42.90.242)
 ```
 
-> Os comandos abaixo são para **Ubuntu Server 22.04/24.04**. Em outras distribuições, adapte o gerenciador de pacotes.
+> **Dica para colar comandos:** os terminais deste ambiente (zsh/fish) quebraram comandos longos colados com `\` ou heredoc.
+> Por isso, todos os comandos deste roteiro estão **um por linha**. Cole e execute um bloco por vez e confira a saída antes de seguir.
 
 ---
 
-## Parte A — Banco de dados
+## Parte A — Banco de dados (10.42.90.242) ✅ concluída
 
-Escolha **uma** das opções: **A1 (Docker)** ou **A2 (PostgreSQL nativo)**. Para produção, recomendamos a A2.
+Registro do que foi feito, para referência ou reinstalação.
 
-### A1. Via Docker (desenvolvimento/homologação)
+| Item | Valor |
+|---|---|
+| Pasta | `~/cead-diarias-db` (usuário `cead`) |
+| Arquivos | `docker-compose.yml` (cópia em `deploy/db/docker-compose.yml` no repositório) e `.env` (credenciais, `chmod 600`) |
+| Container | `cead_diarias_db` (imagem `postgres:15-alpine`) |
+| Volume | `cead_diarias_pgdata` |
+| Porta | `10.42.90.242:5433` (a 5432 é do banco da **OLICMAT**, `olicmat-db` — **não mexer**) |
+| Banco / usuário | `cead_db` / `cead_app` |
 
-1. Instale o Docker e o plugin Compose:
-   ```bash
-   sudo apt update && sudo apt install -y docker.io docker-compose-v2
-   sudo usermod -aG docker $USER   # depois, saia e entre de novo na sessão
-   ```
-2. Na raiz do projeto, crie o `.env` do banco a partir do exemplo e **troque a senha**:
-   ```bash
-   cp .env.example .env
-   nano .env        # defina POSTGRES_PASSWORD
-   ```
-3. Suba o container e confira se ficou saudável:
-   ```bash
-   docker compose up -d
-   docker compose ps          # STATUS deve mostrar "healthy"
-   ```
-4. Anote a string de conexão que a aplicação vai usar:
-   ```
-   postgresql://<POSTGRES_USER>:<POSTGRES_PASSWORD>@<IP_DO_SERVIDOR>:5432/<POSTGRES_DB>?schema=public
-   ```
-
-### A2. PostgreSQL nativo (produção)
-
-1. **Instale o PostgreSQL 15** (repositório oficial):
-   ```bash
-   sudo apt install -y curl ca-certificates
-   sudo install -d /usr/share/postgresql-common/pgdg
-   sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
-   echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
-   sudo apt update && sudo apt install -y postgresql-15
-   ```
-
-2. **Crie o usuário e o banco da aplicação.** Use uma senha forte, sem `@`, `:` ou `/` (ou codifique-a como URL):
-   ```bash
-   sudo -u postgres psql <<'SQL'
-   CREATE ROLE cead_app WITH LOGIN PASSWORD 'TROQUE_ESTA_SENHA';
-   CREATE DATABASE cead_db OWNER cead_app ENCODING 'UTF8' TEMPLATE template0;
-   \c cead_db
-   ALTER SCHEMA public OWNER TO cead_app;
-   SQL
-   ```
-   > O usuário `cead_app` precisa ser **dono** do banco e do schema `public`. As migrations criam tabelas, tipos enum, uma função PL/pgSQL e um trigger.
-
-3. **Libere o acesso remoto.** Este passo só é necessário se a aplicação estiver em **outra** máquina.
-   - Em `/etc/postgresql/15/main/postgresql.conf`:
-     ```
-     listen_addresses = '*'          # ou o IP da interface interna
-     ```
-   - Em `/etc/postgresql/15/main/pg_hba.conf`, libere **apenas** o IP do servidor de aplicação:
-     ```
-     host    cead_db    cead_app    <IP_DO_SERVIDOR_APP>/32    scram-sha-256
-     ```
-   - Reinicie e restrinja a porta no firewall:
-     ```bash
-     sudo systemctl restart postgresql
-     sudo ufw allow from <IP_DO_SERVIDOR_APP> to any port 5432 proto tcp
-     ```
-
-4. **Teste a conexão a partir do servidor de aplicação**:
-   ```bash
-   sudo apt install -y postgresql-client
-   psql "postgresql://cead_app:SENHA@<IP_DO_SERVIDOR_BD>:5432/cead_db" -c "select version();"
-   ```
-
-5. **Configure o backup diário.** Recomendado:
-   ```bash
-   sudo mkdir -p /var/backups/cead && sudo chown postgres /var/backups/cead
-   sudo -u postgres crontab -e
-   # Adicione (backup às 02h, mantém 14 dias):
-   0 2 * * * pg_dump -Fc cead_db > /var/backups/cead/cead_$(date +\%F).dump && find /var/backups/cead -name '*.dump' -mtime +14 -delete
-   ```
-   Para restaurar: `pg_restore -d cead_db --clean /var/backups/cead/cead_AAAA-MM-DD.dump`
-
-> **Importante:** a estrutura das tabelas **não** é criada manualmente. Ela é criada pela aplicação no passo B2.5 (`prisma migrate deploy`). O antigo `setup.sql` (trigger de relatórios) agora faz parte das migrations.
-
----
-
-## Parte B — Aplicação
-
-### B1. Pré-requisitos do servidor de aplicação
+Comandos úteis (na .242, dentro de `~/cead-diarias-db`):
 
 ```bash
-# Node.js 22 LTS (o Vite 7 exige Node >= 20.19)
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs git nginx
+docker compose ps
+docker compose logs --tail 50
+docker compose restart
+```
+
+Para ver a senha do banco, necessária no passo B4:
+
+```bash
+grep POSTGRES_PASSWORD ~/cead-diarias-db/.env
+```
+
+> Volumes antigos removidos em 27/10/2026 (`challenger_*`, `erp-poller_*`, `homologacao_pgdata`). O backup deles está em `~/backup-volumes-2026-10-27` na .242.
+
+Os passos que ainda faltam na .242 (firewall e backup do banco) estão nos passos **B10** e **B11**, porque dependem da aplicação já instalada.
+
+---
+
+## Parte B — Aplicação (10.42.90.243)
+
+Todos os comandos abaixo são executados **na 10.42.90.243**, com um usuário que tenha `sudo` (ex.: `cead`), salvo indicação em contrário.
+
+### B1. Conferir o sistema e o acesso ao banco
+
+```bash
+lsb_release -d
+df -h /
+sudo apt update
+sudo apt install -y netcat-openbsd curl git rsync
+nc -zv 10.42.90.242 5433
+```
+
+✅ **Esperado:** Ubuntu 22.04/24.04, alguns GB livres e `Connection to 10.42.90.242 5433 port [tcp/*] succeeded!`.
+❌ Se o `nc` falhar, a .243 não alcança o banco. Verifique a rede antes de seguir.
+
+### B2. Instalar Node.js 22, Nginx e PM2
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh
+sudo bash /tmp/nodesource_setup.sh
+sudo apt install -y nodejs nginx
 sudo npm install -g pm2
-
-node -v    # deve mostrar v22.x
+node -v
+npm -v
+pm2 -v
+nginx -v
 ```
 
-Obtenha o código:
+✅ **Esperado:** `node` v22.x. O Vite 7 exige Node 20.19 ou superior.
+
+### B3. Baixar o código
+
 ```bash
-sudo mkdir -p /opt/challenger && sudo chown $USER /opt/challenger
-git clone <URL_DO_REPOSITORIO> /opt/challenger
+sudo mkdir -p /opt/challenger
+sudo chown $USER:$USER /opt/challenger
+git clone https://github.com/CEAD-UFPI/challenger.git /opt/challenger
 cd /opt/challenger
+git checkout dev-master
+git log --oneline -3
 ```
 
-### B2. Backend (API)
+- Se o repositório for **privado**, o `git clone` pede usuário e senha. Use seu usuário do GitHub e, como senha, um **Personal Access Token**, criado em GitHub → Settings → Developer settings → Tokens, com permissão de leitura no repositório.
+- Use a branch `dev-master` enquanto o PR #3 não for aprovado. Depois do merge, use `git checkout master`.
 
-1. **Instale as dependências.** As devDependencies também são necessárias, porque incluem TypeScript, Prisma CLI e ts-node para o seed:
-   ```bash
-   cd /opt/challenger/back
-   npm ci
-   ```
+### B4. Configurar o backend (`back/.env`)
 
-2. **Configure as variáveis de ambiente:**
-   ```bash
-   cp .env.example .env
-   nano .env
-   ```
+Gere o segredo do JWT e copie o resultado:
 
-   | Variável | Obrigatória | Exemplo / observação |
-   |---|---|---|
-   | `NODE_ENV` | sim | `production` |
-   | `PORT` | não | `3000` |
-   | `DATABASE_URL` | sim | `postgresql://cead_app:SENHA@IP_BD:5432/cead_db?schema=public` |
-   | `JWT_SECRET` | **sim em produção** | Gere com: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
-   | `CORS_ORIGIN` | sim | `https://diarias.seudominio.edu.br` |
-   | `FRONTEND_URL` | sim | Igual ao acima; é usada nos links dos e-mails |
-   | `TRUST_PROXY` | sim (com Nginx) | `1`. Sem isso, o limite de tentativas de login trata todos os usuários como o mesmo IP |
-   | `LOGIN_RATE_LIMIT` | não | `10` tentativas falhas de login por IP a cada 15 min |
-   | `UPLOAD_DIR` | sim | `/var/lib/challenger/uploads`. É onde ficam os comprovantes dos relatórios |
-   | `MAX_UPLOAD_MB` | não | `10` |
-   | `SMTP_HOST` / `SMTP_PORT` | não | Se vazio, usa o Gmail/Google Workspace |
-   | `SMTP_USER` / `SMTP_PASS` | recomendado | Conta de envio. Para Gmail, use uma **senha de app** |
-   | `SMTP_FROM` | não | `"Challenger CEAD <cticead@ufpi.edu.br>"` |
-
-   > Sem SMTP configurado, a API não falha. Os links de convite e de recuperação de senha são gravados no log (`pm2 logs`).
-
-3. **Proteja o arquivo e crie a pasta de comprovantes:**
-   ```bash
-   chmod 600 .env
-   sudo mkdir -p /var/lib/challenger/uploads
-   sudo chown $USER /var/lib/challenger/uploads
-   ```
-   > A pasta `UPLOAD_DIR` guarda os comprovantes enviados pelos agentes. Ela **precisa entrar no backup**, junto com o banco (veja B6).
-
-4. **Gere o client do Prisma:**
-   ```bash
-   npx prisma generate
-   ```
-
-5. **Crie as tabelas no banco** (aplica todas as migrations):
-   ```bash
-   npm run db:migrate
-   ```
-   O resultado esperado é `All migrations have been successfully applied.`
-
-6. **Carregue os dados iniciais.** O seed cria bancos, cursos, objetivos, tipos de diária, destinos e o usuário administrador:
-   ```bash
-   SEED_ADMIN_PASSWORD='UmaSenhaForte!' npm run db:seed
-   ```
-   - O administrador criado é `admin@ufpi.edu.br`, com a senha definida acima.
-   - Para incluir dados de demonstração (o professor de exemplo), acrescente `SEED_DEMO=true`. **Não use em produção.**
-   - O seed é idempotente: pode ser executado de novo sem duplicar dados.
-
-7. **Compile e inicie com o PM2:**
-   ```bash
-   npm run build
-   pm2 start dist/server.js --name challenger-api
-   pm2 save
-   pm2 startup     # execute o comando que ele imprimir, para iniciar no boot
-   ```
-
-8. **Verifique:**
-   ```bash
-   curl http://localhost:3000/api/health      # {"status":"ok"}
-   pm2 logs challenger-api --lines 20
-   ```
-
-### B3. Frontend
-
-1. **Configure a URL da API.** Ela é embutida no build, então precisa estar definida antes de compilar:
-   ```bash
-   cd /opt/challenger/front
-   cp .env.example .env
-   nano .env
-   ```
-   Com o Nginx fazendo proxy de `/api` no mesmo domínio (recomendado):
-   ```
-   VITE_API_URL=/api
-   ```
-
-2. **Instale e gere o build:**
-   ```bash
-   npm ci
-   npm run build          # gera front/dist
-   ```
-
-3. **Publique os arquivos estáticos:**
-   ```bash
-   sudo mkdir -p /var/www/challenger
-   sudo rsync -a --delete dist/ /var/www/challenger/
-   ```
-
-### B4. Nginx (frontend + proxy da API)
-
-Crie `/etc/nginx/sites-available/challenger`:
-
-```nginx
-server {
-    listen 80;
-    server_name diarias.seudominio.edu.br;
-
-    root /var/www/challenger;
-    index index.html;
-
-    # Upload de comprovantes (o padrão do Nginx, 1 MB, recusaria os arquivos)
-    client_max_body_size 12m;
-
-    # API
-    location /api/ {
-        proxy_pass         http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Real-IP $remote_addr;
-        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-    }
-
-    # SPA: as rotas do React (/app, /reset-password, /completar-registo) caem no index.html
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-```
-
-Ative o site e configure o HTTPS:
 ```bash
-sudo ln -s /etc/nginx/sites-available/challenger /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t && sudo systemctl reload nginx
-
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d diarias.seudominio.edu.br
-
-sudo ufw allow 'Nginx Full'
+openssl rand -hex 48
 ```
 
-> A porta 3000 **não** deve ficar exposta externamente. Só o Nginx acessa a API.
+Na **10.42.90.242**, pegue a senha do banco:
 
-### B5. Primeiro acesso
+```bash
+grep POSTGRES_PASSWORD ~/cead-diarias-db/.env
+```
 
-1. Acesse `https://diarias.seudominio.edu.br` e entre com `admin@ufpi.edu.br` e a senha do `SEED_ADMIN_PASSWORD`.
-2. Troque a senha do admin em **Meu Perfil → Alterar Senha**.
+De volta à **.243**, crie o arquivo a partir do exemplo e edite com o `nano`:
+
+```bash
+cd /opt/challenger/back
+cp .env.example .env
+chmod 600 .env
+nano .env
+```
+
+Deixe o conteúdo assim, substituindo os campos `<...>`:
+
+```ini
+NODE_ENV=production
+PORT=3000
+
+DATABASE_URL="postgresql://cead_app:<SENHA_DO_BANCO>@10.42.90.242:5433/cead_db?schema=public"
+
+JWT_SECRET=<RESULTADO_DO_openssl_rand>
+
+CORS_ORIGIN=http://10.42.90.243
+FRONTEND_URL=http://10.42.90.243
+
+TRUST_PROXY=1
+LOGIN_RATE_LIMIT=10
+
+UPLOAD_DIR=/var/lib/challenger/uploads
+MAX_UPLOAD_MB=10
+
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=cticead@ufpi.edu.br
+SMTP_PASS=<SENHA_DE_APP_DO_GMAIL>
+SMTP_FROM="Challenger CEAD <cticead@ufpi.edu.br>"
+```
+
+Para salvar no `nano`: `Ctrl+O`, `Enter`, `Ctrl+X`.
+
+**Observações:**
+- **`CORS_ORIGIN` / `FRONTEND_URL`:** quando houver um nome de domínio (ex.: `https://diarias.cead.ufpi.br`), troque nas duas variáveis e faça o passo B12.
+- **`TRUST_PROXY=1`:** é obrigatório atrás do Nginx. Sem ele, o limite de tentativas de login trata todos os usuários como um único IP e bloqueia todo mundo.
+- **SMTP:** para o Gmail, a senha precisa ser uma **senha de app**. Se o SMTP ficar vazio, a aplicação funciona e os links de convite e de recuperação de senha aparecem em `pm2 logs`.
+
+Crie a pasta dos comprovantes:
+
+```bash
+sudo mkdir -p /var/lib/challenger/uploads
+sudo chown -R $USER:$USER /var/lib/challenger
+```
+
+### B5. Instalar dependências e criar as tabelas
+
+```bash
+cd /opt/challenger/back
+npm ci
+npx prisma generate
+npm run db:migrate
+```
+
+✅ **Esperado:** `All migrations have been successfully applied.`, com 4 migrations aplicadas.
+
+> O `npm ci` também instala as devDependencies (TypeScript, Prisma CLI, ts-node), que são necessárias para o build e o seed. **Não** exporte `NODE_ENV=production` no terminal antes deste comando. No `.env` não há problema.
+
+### B6. Carregar os dados iniciais e criar o administrador
+
+Escolha uma senha forte para o admin (troque `UmaSenhaForte123` abaixo):
+
+```bash
+SEED_ADMIN_PASSWORD='UmaSenhaForte123' npm run db:seed
+```
+
+✅ **Esperado:** `✅ Seed finalizado (sem dados de demonstração).`
+
+- Cria bancos, cursos, objetivos, tipos de diária, destinos, um projeto de exemplo e o usuário **`admin@ufpi.edu.br`**.
+- Pode ser executado de novo sem duplicar dados.
+- Em homologação, se quiser também o professor de exemplo (`professor@ufpi.edu.br`), acrescente `SEED_DEMO=true` antes do comando.
+
+### B7. Compilar e iniciar a API com o PM2
+
+```bash
+cd /opt/challenger/back
+npm run build
+pm2 start dist/server.js --name challenger-api --cwd /opt/challenger/back
+pm2 save
+pm2 startup
+```
+
+O `pm2 startup` imprime um comando começando com `sudo env PATH=...`. **Copie e execute esse comando**, para que a API suba sozinha quando o servidor reiniciar.
+
+Teste:
+
+```bash
+curl http://localhost:3000/api/health
+pm2 status
+pm2 logs challenger-api --lines 20 --nostream
+```
+
+✅ **Esperado:** `{"status":"ok"}`, o `challenger-api` como `online` e, no log, `🚀 Backend Challenger rodando na porta 3000`.
+
+### B8. Compilar o frontend
+
+```bash
+cd /opt/challenger/front
+cp .env.example .env
+nano .env
+```
+
+Deixe o arquivo com **uma única linha**:
+
+```ini
+VITE_API_URL=/api
+```
+
+Depois instale, compile e publique:
+
+```bash
+npm ci
+npm run build
+sudo mkdir -p /var/www/challenger
+sudo rsync -a --delete dist/ /var/www/challenger/
+ls /var/www/challenger
+```
+
+✅ **Esperado:** `✓ built in ...`, e `index.html` e `assets` dentro de `/var/www/challenger`.
+
+### B9. Configurar o Nginx
+
+A configuração já está no repositório (`deploy/nginx/challenger.conf`):
+
+```bash
+sudo cp /opt/challenger/deploy/nginx/challenger.conf /etc/nginx/sites-available/challenger
+sudo ln -sf /etc/nginx/sites-available/challenger /etc/nginx/sites-enabled/challenger
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+✅ **Esperado:** `syntax is ok` e `test is successful`.
+
+Se o firewall (`ufw`) estiver ativo, libere o HTTP. Confira antes:
+
+```bash
+sudo ufw status
+```
+
+Só se aparecer `Status: active`:
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx HTTP'
+```
+
+> ⚠️ Não rode `ufw enable` se ele estiver inativo, a menos que tenha liberado o SSH antes. Isso pode cortar seu acesso à máquina.
+
+Teste pela rede, a partir do seu computador ou da própria .243:
+
+```bash
+curl http://10.42.90.243/api/health
+```
+
+✅ **Esperado:** `{"status":"ok"}`. Agora abra **http://10.42.90.243** no navegador. A tela de login deve aparecer.
+
+### B10. Restringir a porta do banco à 10.42.90.243 (executar na .242)
+
+Hoje a porta 5433 aceita conexões de qualquer máquina da rede. Este passo deixa entrar **apenas a .243**. A porta 5432 (OLICMAT) **não é afetada**.
+
+> O Docker ignora o `ufw` para portas publicadas por containers. Por isso a regra vai na cadeia `DOCKER-USER` do iptables, aplicada por um serviço do systemd a cada boot.
+
+**Na .243**, envie os dois arquivos do repositório para a .242. A .242 aceita login com senha:
+
+```bash
+scp /opt/challenger/deploy/db/docker-user-firewall.sh cead@10.42.90.242:~/cead-diarias-db/
+scp /opt/challenger/deploy/db/docker-user-firewall.service cead@10.42.90.242:~/cead-diarias-db/
+```
+
+**Na .242:**
+
+```bash
+cd ~/cead-diarias-db
+sudo install -m 755 docker-user-firewall.sh /usr/local/sbin/docker-user-firewall.sh
+sudo install -m 644 docker-user-firewall.service /etc/systemd/system/docker-user-firewall.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now docker-user-firewall.service
+sudo iptables -L DOCKER-USER -n --line-numbers
+```
+
+✅ **Esperado:** uma regra `DROP tcp -- !10.42.90.243 0.0.0.0/0 ctorigdstport 5433`.
+
+Valide os três cenários:
+
+| Onde rodar | Comando | Resultado esperado |
+|---|---|---|
+| .243 | `nc -zv -w 3 10.42.90.242 5433` | `succeeded` |
+| Seu computador (WSL) | `nc -zv -w 3 10.42.90.242 5433` | timeout / falha |
+| .243 | `curl http://localhost:3000/api/health` | `{"status":"ok"}` |
+
+Para desfazer, se necessário:
+
+```bash
+sudo systemctl disable --now docker-user-firewall.service
+sudo iptables -D DOCKER-USER -p tcp -m conntrack --ctorigdstport 5433 ! -s 10.42.90.243 -j DROP
+```
+
+### B11. Backups
+
+**Banco (na .242), todo dia às 02h, mantendo 14 dias:**
+
+```bash
+mkdir -p ~/backups-db
+crontab -e
+```
+
+Adicione esta linha, sem quebrar:
+
+```
+0 2 * * * docker exec cead_diarias_db pg_dump -U cead_app -Fc cead_db > /home/cead/backups-db/cead_$(date +\%F).dump && find /home/cead/backups-db -name '*.dump' -mtime +14 -delete
+```
+
+Para testar na hora:
+
+```bash
+docker exec cead_diarias_db pg_dump -U cead_app -Fc cead_db > ~/backups-db/teste.dump
+ls -lh ~/backups-db
+```
+
+Para restaurar:
+
+```bash
+docker exec -i cead_diarias_db pg_restore -U cead_app -d cead_db --clean < ~/backups-db/ARQUIVO.dump
+```
+
+**Comprovantes (na .243), todo dia às 02h30, mantendo 14 dias:**
+
+```bash
+mkdir -p ~/backups-uploads
+crontab -e
+```
+
+Adicione:
+
+```
+30 2 * * * tar -czf /home/cead/backups-uploads/uploads_$(date +\%F).tar.gz -C /var/lib/challenger uploads && find /home/cead/backups-uploads -name '*.tar.gz' -mtime +14 -delete
+```
+
+> O banco guarda apenas o **nome** dos arquivos. O conteúdo dos comprovantes só existe em `/var/lib/challenger/uploads`, então os dois backups são necessários. O ideal é copiar ambos periodicamente para fora dos servidores.
+
+### B12. HTTPS (quando houver um nome de domínio)
+
+O certificado gratuito (Let's Encrypt) exige um **nome de domínio** apontando para a .243 e acessível pela internet. Ele não funciona só com o IP. Quando o domínio existir:
+
+1. No `back/.env`, troque `CORS_ORIGIN` e `FRONTEND_URL` para `https://<dominio>` e rode `pm2 restart challenger-api`.
+2. Em `/etc/nginx/sites-available/challenger`, troque `server_name 10.42.90.243 _;` por `server_name <dominio>;`.
+3. Rode os comandos:
+   ```bash
+   sudo apt install -y certbot python3-certbot-nginx
+   sudo certbot --nginx -d <dominio>
+   ```
+
+### B13. Primeiro acesso
+
+1. Abra **http://10.42.90.243** e entre com `admin@ufpi.edu.br` e a senha usada no B6.
+2. Vá em **Meu Perfil → Alterar Senha** se quiser trocar a senha inicial.
 3. Cadastre os dados de apoio: **Cursos, Bancos, Destinos, Objetivos, Tipos de Diária e Projetos**.
-4. Cadastre os usuários em **Agentes**. Cada usuário recebe um convite por e-mail, válido por 48h, para definir a própria senha.
+4. Em **Agentes**, cadastre os usuários. Cada um recebe um e-mail de convite, válido por 48h, para criar a própria senha.
 5. Em **Solicitantes**, vincule a um curso os usuários que poderão abrir solicitações de viagem.
 
-### B6. Backup dos comprovantes
-
-O banco guarda apenas o nome do arquivo; o conteúdo fica em `UPLOAD_DIR`. Exemplo de backup diário:
-```bash
-sudo crontab -e
-# Às 02h30, mantendo 14 dias:
-30 2 * * * tar -czf /var/backups/cead/uploads_$(date +\%F).tar.gz -C /var/lib/challenger uploads && find /var/backups/cead -name 'uploads_*.tar.gz' -mtime +14 -delete
-```
-Se o banco e a aplicação estão em máquinas diferentes, copie esses arquivos para um local externo (rsync/scp).
-
 ---
 
-## Testes automatizados
+## Atualizar para uma nova versão (na .243)
+
+Antes de atualizar, faça um backup do banco (B11, comando de teste na .242).
 
 ```bash
-cd back
-npm test                 # só os testes unitários (não precisam de banco)
-```
-
-Para rodar também os testes de integração, use um **banco exclusivo de testes**. Ele é **apagado e recriado** a cada execução:
-```bash
-TEST_DATABASE_URL="postgresql://cead_app:SENHA@localhost:5432/cead_db_test?schema=public" npm test
-```
-- O usuário precisa de permissão `CREATEDB`, ou o banco `cead_db_test` precisa já existir com ele como dono.
-- A suíte se recusa a rodar se `TEST_DATABASE_URL` for igual a `DATABASE_URL`.
-- **Nunca** aponte `TEST_DATABASE_URL` para o banco de produção.
-
----
-
-## Atualização de versão
-
-```bash
-cd /opt/challenger && git pull
-
-# Backend
+cd /opt/challenger
+git pull
 cd back
 npm ci
 npx prisma generate
-npm run db:migrate          # aplica apenas as migrations novas
+npm run db:migrate
 npm run build
 pm2 restart challenger-api
-
-# Frontend
 cd ../front
-npm ci && npm run build
+npm ci
+npm run build
 sudo rsync -a --delete dist/ /var/www/challenger/
 ```
 
-> Faça um backup do banco (`pg_dump`) **antes** de rodar `db:migrate` em produção.
-
-### Banco que já estava em uso (instalação anterior)
-
-Se o banco foi criado antes desta versão, ou se o `setup.sql` foi executado manualmente, basta rodar `npm run db:migrate`:
-- a migration `20260501000000_trigger_relatorio_viagem` usa `CREATE OR REPLACE`/`DROP TRIGGER IF EXISTS`, então é segura mesmo com o trigger já existente;
-- a migration `20260502000000_numero_endereco_e_devolucao` só **adiciona** colunas opcionais.
+Se a configuração do Nginx mudar no repositório, repita o B9.
 
 ---
 
-## Ambiente de desenvolvimento (resumo)
+## Testes automatizados (desenvolvimento)
 
 ```bash
-# 1. Banco
-cp .env.example .env && docker compose up -d
+cd back
+npm test
+```
 
-# 2. API (http://localhost:3000)
-cd back && npm install && cp .env.example .env    # ajuste DATABASE_URL
-npx prisma migrate dev && SEED_DEMO=true npm run db:seed
-npm run dev
+O comando acima roda só os testes unitários, que não precisam de banco. Para incluir os testes de integração, informe um banco **exclusivo** para eles, que é **apagado e recriado** a cada execução:
 
-# 3. Front (http://localhost:5173)
-cd ../front && npm install && cp .env.example .env
+```bash
+TEST_DATABASE_URL="postgresql://USUARIO:SENHA@localhost:5432/cead_db_test?schema=public" npm test
+```
+
+> **Nunca** aponte `TEST_DATABASE_URL` para o banco da .242. A suíte se recusa a rodar se ele for igual a `DATABASE_URL`, mas não detecta outros bancos reais.
+
+## Ambiente de desenvolvimento local (resumo)
+
+```bash
+cp .env.example .env
+docker compose up -d
+cd back
+npm install
+cp .env.example .env
+npx prisma migrate dev
+SEED_DEMO=true npm run db:seed
 npm run dev
 ```
 
-Usuários de demonstração (com `SEED_DEMO=true`, senha `123456`):
-- `admin@ufpi.edu.br` (ADMIN + FINANCEIRO)
-- `professor@ufpi.edu.br` (AGENTE + solicitante do curso HISTÓRIA)
+Em outro terminal:
+
+```bash
+cd front
+npm install
+cp .env.example .env
+npm run dev
+```
+
+Com `SEED_DEMO=true` e sem `SEED_ADMIN_PASSWORD`, os usuários de demonstração usam a senha `123456`: `admin@ufpi.edu.br` e `professor@ufpi.edu.br`.
 
 ---
 
@@ -359,14 +448,16 @@ Usuários de demonstração (com `SEED_DEMO=true`, senha `123456`):
 
 | Sintoma | Causa provável / solução |
 |---|---|
-| `JWT_SECRET é obrigatória em produção` ao iniciar | Defina `JWT_SECRET` no `back/.env`. |
-| `P1001: Can't reach database server` | Verifique o IP/porta na `DATABASE_URL`, o `listen_addresses`, o `pg_hba.conf` e o firewall (Parte A2, passo 3). |
-| `P3018` / `permission denied for schema public` em `db:migrate` | O usuário do banco não é dono do schema. Rode `ALTER SCHEMA public OWNER TO cead_app;`. |
-| Erro de CORS no navegador | `CORS_ORIGIN` deve ser exatamente a origem do front (protocolo + domínio, sem `/` no final). |
-| Página em branco / 404 ao recarregar `/app/...` | Falta o `try_files ... /index.html` no Nginx. |
-| Front chama `localhost:3000` em produção | O `VITE_API_URL` não estava definido **antes** do `npm run build`. Defina e gere o build de novo. |
-| Convite ou recuperação de senha não chegam | Confira as variáveis `SMTP_*`. Sem SMTP, o link aparece em `pm2 logs challenger-api`. |
-| `Muitas tentativas. Aguarde 15 minutos` para todos os usuários | Falta `TRUST_PROXY=1` no `back/.env` atrás do Nginx. Todos aparecem com o IP do proxy. |
-| Upload de comprovante falha com erro 413 | Falta `client_max_body_size 12m;` no Nginx (B4). |
-| `EACCES` ao enviar comprovante | O usuário que roda o PM2 não tem permissão de escrita em `UPLOAD_DIR`. |
-| Login retorna "conta pendente de ativação" | O usuário ainda não concluiu o convite. Reenvie com "Esqueci minha senha" ou recrie o usuário. |
+| `nc` da .243 para `10.42.90.242 5433` falha | Container parado (`docker compose ps` na .242) ou regra do B10 com IP errado. |
+| `P1001: Can't reach database server` | Mesmo caso acima. Confira também host e porta (**5433**) na `DATABASE_URL`. |
+| `P1000: Authentication failed` | Senha na `DATABASE_URL` diferente da do `~/cead-diarias-db/.env` na .242. |
+| `JWT_SECRET é obrigatória em produção` | Preencha `JWT_SECRET` no `back/.env` e rode `pm2 restart challenger-api`. |
+| Erro de CORS no navegador | `CORS_ORIGIN` precisa ser exatamente o endereço aberto no navegador (ex.: `http://10.42.90.243`, sem `/` no final). |
+| Página em branco ou 404 ao recarregar `/app/...` | Configuração do Nginx não aplicada (B9). |
+| Front chamando `localhost:3000` | O `front/.env` não tinha `VITE_API_URL=/api` no momento do build. Corrija e repita o B8. |
+| `Muitas tentativas. Aguarde 15 minutos` para todos | Falta `TRUST_PROXY=1` no `back/.env`. |
+| Upload de comprovante com erro 413 | Falta `client_max_body_size` no Nginx (B9). |
+| `EACCES` ao enviar comprovante | Permissão em `/var/lib/challenger/uploads`. Rode de novo o `chown` do B4. |
+| Convite ou recuperação de senha não chegam | Confira o `SMTP_*`. Os links aparecem em `pm2 logs challenger-api`. |
+| Login: "conta pendente de ativação" | O usuário ainda não concluiu o convite. Use "Esqueci minha senha" ou recrie o usuário. |
+| API não volta após reiniciar o servidor | O comando impresso pelo `pm2 startup` não foi executado (B7). |
