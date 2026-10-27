@@ -5,7 +5,7 @@ import { useAuthStore } from "../store/authStore";
 import api from "../services/api";
 
 export default function Login() {
-  const { login, user } = useAuthStore();
+  const { login, isAuthenticated } = useAuthStore();
   const navigate = useNavigate();
 
   // Estados de navegação interna
@@ -19,8 +19,8 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (user) navigate("/app");
-  }, [user, navigate]);
+    if (isAuthenticated) navigate("/app");
+  }, [isAuthenticated, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,8 +28,8 @@ export default function Login() {
     setLoading(true);
     try {
       await login(email, password);
-    } catch (err) {
-      setError("Acesso negado. Verifique suas credenciais.");
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Acesso negado. Verifique suas credenciais.");
     } finally {
       setLoading(false);
     }

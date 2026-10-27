@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import api from "../services/api";
 
 interface User {
@@ -7,8 +8,7 @@ interface User {
   username: string;
   email: string;
   roles: string[];
-  // Novos campos vindos do Backend
-  courseId?: number;
+  courseId?: number | null;
   isSolicitant?: boolean;
 }
 
@@ -22,38 +22,40 @@ interface AuthState {
   logout: () => void;
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
-  user: null,
-  // Tenta recuperar token salvo. Se você quisesse persistir o usuário completo,
-  // precisaria usar persist middleware ou salvar user no localStorage também.
-  // Por simplificação, vamos confiar que o login preenche o user.
-  token: localStorage.getItem("sdp_token"),
-  activeRole: "",
-  isAuthenticated: !!localStorage.getItem("sdp_token"),
+// Usuário, token e perfil ativo são persistidos para sobreviver ao recarregar a página
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
+      user: null,
+      token: null,
+      activeRole: "",
+      isAuthenticated: false,
 
-  login: async (email, password) => {
-    try {
-      const response = await api.post("/login", { email, password });
-      const { user, token } = response.data;
+      login: async (email, password) => {
+        const response = await api.post("/login", { email, password });
+        const { user, token } = response.data;
+        set({
+          user,
+          token,
+          isAuthenticated: true,
+          activeRole: user.roles[0] ?? "",
+        });
+      },
 
-      localStorage.setItem("sdp_token", token);
+      switchRole: (role: string) => set({ activeRole: role }),
 
-      set({
-        user,
-        token,
-        isAuthenticated: true,
-        activeRole: user.roles[0],
-      });
-    } catch (error) {
-      console.error("Erro de login:", error);
-      throw error;
-    }
-  },
+      logout: () => set({ user: null, token: null, isAuthenticated: false, activeRole: "" }),
+    }),
+    {
+      name: "sdp_auth",
+      // Sessões antigas (só com token, sem usuário) são descartadas
+      merge: (persisted, current) => {
+        const p = persisted as Partial<AuthState> | undefined;
+        return p?.token && p?.user ? { ...current, ...p } : current;
+      },
+    },
+  ),
+);
 
-  switchRole: (role: string) => set({ activeRole: role }),
-
-  logout: () => {
-    localStorage.removeItem("sdp_token");
-    set({ user: null, token: null, isAuthenticated: false, activeRole: "" });
-  },
-}));
+// Remove a chave antiga usada antes da persistência completa
+localStorage.removeItem("sdp_token");

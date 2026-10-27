@@ -1,15 +1,27 @@
 import {
   AlertCircle,
-  CheckCircle2,
+  AlertTriangle,
+  CheckCircle,
   Clock,
   FileText,
-  LayoutDashboard,
   Lock,
-  Plane,
   Plus,
+  Wallet,
 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import api from "../services/api";
 import { useAuthStore } from "../store/authStore";
+
+// Relatório em aberto (ou em correção) com prazo vencido bloqueia novas viagens (Regra 5)
+const isReportPending = (report: any) =>
+  report && ["ABERTO", "EM_CORRECAO"].includes(report.status);
+const isReportOverdue = (report: any) =>
+  isReportPending(report) && new Date(report.prazoLimite) < new Date();
+
+// Detalhes (viagens) em que o usuário logado é o agente
+const myTrips = (solicitacoes: any[], userId?: number) =>
+  solicitacoes.flatMap((s: any) => s.details ?? []).filter((d: any) => d.agentId === userId);
 
 // Componente visual de Card
 const StatsCard = ({ icon, label, value, color, highlight }: any) => {
@@ -39,11 +51,62 @@ const StatsCard = ({ icon, label, value, color, highlight }: any) => {
   );
 };
 
+const DynamicStatsCards = ({ solicitacoes, projetos }: { solicitacoes: any[]; projetos: any[] }) => {
+  const { user } = useAuthStore();
+
+  const stats = useMemo(() => {
+    return {
+      saldoTotal: projetos.reduce((acc: number, p: any) => acc + Number(p.saldo), 0),
+      pendentesAprovacao: solicitacoes.filter((s: any) =>
+        (user?.roles.includes("DIRECAO") && s.status === "AGUARDANDO_DIRECAO") ||
+        (user?.roles.includes("FINANCEIRO") && s.status === "AGUARDANDO_FINANCEIRO")
+      ).length,
+      minhasViagens: solicitacoes.filter((s: any) => s.requesterId === user?.id).length,
+      relatoriosPendentes: myTrips(solicitacoes, user?.id).filter((d: any) =>
+        isReportPending(d.report),
+      ).length
+    };
+  }, [solicitacoes, projetos, user]);
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* CARD: SALDO (Apenas Admin/Financeiro) */}
+      {(user?.roles.includes("ADMIN") || user?.roles.includes("FINANCEIRO")) && (
+        <StatsCard icon={<Wallet size={20} />} label="Saldo Geral TEDs" value={`R$ ${stats.saldoTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} color="green" />
+      )}
+
+      {/* CARD: PENDÊNCIAS DE APROVAÇÃO (Direção/Financeiro) */}
+      {["ADMIN", "FINANCEIRO", "DIRECAO"].some(r => user?.roles.includes(r)) && (
+        <StatsCard icon={<Clock size={20} />} label="Para Aprovar" value={stats.pendentesAprovacao} color="red" />
+      )}
+
+      {/* CARD: RELATÓRIOS (Agente) */}
+      {user?.isSolicitant && (
+        <StatsCard icon={<AlertTriangle size={20} />} label="Relatórios Pendentes" value={stats.relatoriosPendentes} color="red" highlight={stats.relatoriosPendentes > 0} />
+      )}
+
+      {/* CARD: SUCESSO (Todos) */}
+      <StatsCard icon={<CheckCircle size={20} />} label="Minhas Viagens" value={stats.minhasViagens} color="blue" />
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user, activeRole } = useAuthStore();
+  const [solicitacoes, setSolicitacoes] = useState<any[]>([]);
+  const [projetos, setProjetos] = useState<any[]>([]);
 
-  const isBlocked = false;
-  const recentSolicitations: any[] = [];
+  useEffect(() => {
+    api.get("/solicitacoes").then((r) => setSolicitacoes(r.data)).catch(() => {});
+    api.get("/projetos").then((r) => setProjetos(r.data)).catch(() => {});
+  }, []);
+
+  const isBlocked = useMemo(
+    () => myTrips(solicitacoes, user?.id).some((d: any) => isReportOverdue(d.report)),
+    [solicitacoes, user],
+  );
+
+  const recentSolicitations = useMemo(() => solicitacoes.slice(0, 5), [solicitacoes]);
 
   // 👇 NOVA TRAVA DE SEGURANÇA À PROVA DE FALHAS
   // Se ele NÃO for solicitante E NÃO for do grupo de gestão, ele é um Agente simples!
@@ -83,33 +146,7 @@ export default function Dashboard() {
       </header>
 
       {/* Cards de Estatísticas */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatsCard
-          icon={<Plane className="w-6 h-6" />}
-          label="Em Curso"
-          value="0"
-          color="blue"
-        />
-        <StatsCard
-          icon={<Clock className="w-6 h-6" />}
-          label="Pendências"
-          value="0"
-          color="red"
-          highlight={isBlocked}
-        />
-        <StatsCard
-          icon={<CheckCircle2 className="w-6 h-6" />}
-          label="Finalizados"
-          value="0"
-          color="green"
-        />
-        <StatsCard
-          icon={<LayoutDashboard className="w-6 h-6" />}
-          label="Total"
-          value={recentSolicitations.length}
-          color="slate"
-        />
-      </div>
+      <DynamicStatsCards solicitacoes={solicitacoes} projetos={projetos} />
 
       {/* Alerta de Bloqueio */}
       {isBlocked && (
@@ -117,8 +154,8 @@ export default function Dashboard() {
           <AlertCircle className="w-10 h-10 shrink-0" />
           <div className="flex-1">
             <h4 className="font-black text-lg">Bloqueio por Inadimplência</h4>
-            <p className="text-sm opacity-90">
-              Novas solicitações estão suspensas.
+            <p className="text-sm opacity-90" >
+              Você possui relatórios de viagem pendentes. Novas solicitações estão suspensas até a regularização.
             </p>
           </div>
         </div>
@@ -139,16 +176,16 @@ export default function Dashboard() {
                 <p className="text-sm">Nenhuma solicitação recente.</p>
               </div>
             ) : (
-              recentSolicitations.map((s) => (
+              recentSolicitations.map((s: any) => (
                 <div
                   key={s.id}
                   className="flex justify-between items-center py-3 border-b border-slate-50 last:border-0">
-                  <div>
-                    <p className="font-bold text-slate-800">{s.destiny}</p>
-                    <p className="text-xs text-slate-400">{s.date}</p>
+                  <div className="flex items-center gap-3">
+                    <p className="font-bold text-slate-800">#{s.id}</p>
+                    <p className="text-xs text-slate-400">{s.destino}</p>
                   </div>
                   <span className="text-xs font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
-                    {s.status}
+                    {s.status?.replace(/_/g, " ")}
                   </span>
                 </div>
               ))
@@ -170,7 +207,7 @@ export default function Dashboard() {
             </div>
 
             <Link
-              to="/app/solicitacoes"
+              to="/app/solicitacoes/nova"
               className={`mt-8 w-full py-4 rounded-2xl font-black flex items-center justify-center gap-2 transition-all ${
                 isBlocked
                   ? "bg-slate-800 text-slate-500 cursor-not-allowed"

@@ -4,6 +4,7 @@ import { useAuthStore } from "./store/authStore";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
+import MyReports from "./pages/MyReports";
 import ResetPassword from "./pages/ResetPassword";
 
 // --- IMPORTANTE: Importe as duas telas de solicitações ---
@@ -11,7 +12,7 @@ import NewSolicitation from "./pages/Movimentacoes/NewSolicitation"; // A tela d
 import Solicitations from "./pages/Movimentacoes/Solicitations"; // A tela da tabela/aprovação
 
 import GenericCadastro from "./components/GenericCadastro";
-import Agents from "./pages/cadastros/Agents";
+import Agents from "./pages/Cadastros/Agents";
 import CompleteProfile from "./pages/Cadastros/CompleteProfile";
 import DailyValues from "./pages/Cadastros/DailyValues";
 import Projects from "./pages/Cadastros/Projects";
@@ -19,13 +20,6 @@ import Solicitants from "./pages/Cadastros/Solicitants";
 import Profile from "./pages/Cadastros/Profile";
 
 import { Building2, GraduationCap, MapPin, Target } from "lucide-react";
-
-const ComingSoon = ({ title }: { title: string }) => (
-  <div className="flex flex-col items-center justify-center h-96 text-slate-400">
-    <h1 className="text-4xl font-black text-slate-200 mb-4">Em Construção</h1>
-    <p className="text-lg font-medium text-slate-600">Módulo: {title}</p>
-  </div>
-);
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   const { isAuthenticated } = useAuthStore();
@@ -53,11 +47,9 @@ export default function App() {
           {/* --- AS DUAS ROTAS DE SOLICITAÇÃO AQUI 👇 --- */}
           <Route path="solicitacoes" element={<Solicitations />} />
           <Route path="solicitacoes/nova" element={<NewSolicitation />} />
+          <Route path="solicitacoes/:id/editar" element={<NewSolicitation />} />
 
-          <Route
-            path="relatorios"
-            element={<ComingSoon title="Relatórios" />}
-          />
+          <Route path="relatorios" element={<MyReports />} />
 
           <Route path="cadastros/agentes" element={<Agents />} />
           <Route path="cadastros/projetos" element={<Projects />} />

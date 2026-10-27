@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import api from "../../services/api";
+import ChangePasswordForm from "../../components/ChangePasswordForm";
 import {
   UserCircle,
   MapPin,
@@ -96,7 +97,20 @@ export default function Profile() {
     setSaving(true);
     setMessage(null);
     try {
-      await api.put("/me", data);
+      // Envia apenas os campos editáveis pelo próprio usuário
+      await api.put("/me", {
+        telefone: data.telefone,
+        celular: data.celular,
+        cep: data.cep,
+        endereco: data.endereco,
+        numero: data.numero,
+        bairro: data.bairro,
+        cidade: data.cidade,
+        estado: data.estado,
+        bankId: data.bancoId ? Number(data.bancoId) : null,
+        agencia: data.agencia,
+        conta: data.conta,
+      });
       setMessage({ type: "success", text: "Perfil atualizado com sucesso!" });
       setTimeout(() => setMessage(null), 3000);
     } catch (error) {
@@ -364,6 +378,8 @@ export default function Profile() {
           </button>
         </div>
       </form>
+
+      <ChangePasswordForm />
     </div>
   );
 }

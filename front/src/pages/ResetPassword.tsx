@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import api from "../services/api";
-import { CheckCircle2, AlertCircle, KeyRound, ShieldAlert } from "lucide-react";
+import { CheckCircle2, AlertCircle, ShieldAlert } from "lucide-react";
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -17,6 +17,14 @@ export default function ResetPassword() {
   const { register, handleSubmit } = useForm();
 
   const onSubmit = async (data: any) => {
+    if (!token) {
+      setMessage({ type: "error", text: "Link inválido: token ausente." });
+      return;
+    }
+    if (data.password.length < 6) {
+      setMessage({ type: "error", text: "A senha deve ter ao menos 6 caracteres." });
+      return;
+    }
     if (data.password !== data.confirmPassword) {
       setMessage({ type: "error", text: "As senhas não coincidem." });
       return;
@@ -36,7 +44,7 @@ export default function ResetPassword() {
     } catch (error: any) {
       setMessage({
         type: "error",
-        text: "Erro ao redefinir. O link pode ter expirado.",
+        text: error.response?.data?.error || "Erro ao redefinir. O link pode ter expirado.",
       });
     } finally {
       setLoading(false);

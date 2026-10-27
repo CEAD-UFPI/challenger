@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import api from "../../services/api";
 import { Banknote, Trash2, Plus } from "lucide-react";
@@ -8,7 +8,13 @@ export default function DailyValues() {
   const { register, handleSubmit, reset } = useForm();
   const [loading, setLoading] = useState(false);
 
-  const load = async () => setItems((await api.get("/tipos-diaria")).data);
+  const load = async () => {
+    try {
+      setItems((await api.get("/tipos-diaria")).data);
+    } catch {
+      alert("Erro ao carregar os tipos de diária.");
+    }
+  };
   useEffect(() => {
     load();
   }, []);
@@ -22,17 +28,20 @@ export default function DailyValues() {
       });
       reset();
       load();
-    } catch (e) {
-      alert("Erro ao salvar.");
+    } catch (e: any) {
+      alert(e.response?.data?.error || "Erro ao salvar.");
     } finally {
       setLoading(false);
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (confirm("Excluir?")) {
+    if (!confirm("Excluir?")) return;
+    try {
       await api.delete(`/tipos-diaria/${id}`);
       load();
+    } catch (e: any) {
+      alert(e.response?.data?.error || "Erro ao excluir.");
     }
   };
 

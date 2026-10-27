@@ -81,12 +81,12 @@ enum Gender {
 
 // ATUALIZADO: Novos status conforme seu fluxo (Regra 3)
 enum SolicitationStatus {
-  RASCUNHO              // Criada pelo Solicitante
-  AGUARDANDO_DIRECAO    // Enviada para Direção (1ª Aprovação)
-  PENDENTE_CORRECAO     // Direção ou Financeiro devolveu
+  RASCUNHO // Criada pelo Solicitante
+  AGUARDANDO_DIRECAO // Enviada para Direção (1ª Aprovação)
+  PENDENTE_CORRECAO // Direção ou Financeiro devolveu
   AGUARDANDO_FINANCEIRO // Direção aprovou -> Vai para Financeiro
   APROVADO_PARA_PAGAMENTO // Financeiro aprovou -> Vai para FADEX
-  PAGO                  // FADEX pagou
+  PAGO // FADEX pagou
   CANCELADO
 }
 
@@ -110,10 +110,10 @@ enum TravelType {
 
 // ATUALIZADO: Status do relatório
 enum ReportStatus {
-  ABERTO      // Criado automaticamente pela Trigger
-  FECHADO     // Agente anexou comprovantes
+  ABERTO // Criado automaticamente pela Trigger
+  FECHADO // Agente anexou comprovantes
   EM_CORRECAO // FADEX pediu ajustes
-  APROVADO    // FADEX finalizou
+  APROVADO // FADEX finalizou
   ARQUIVADO
 }
 
@@ -127,51 +127,52 @@ enum RefusalReason {
 // --- MODELS ---
 
 model User {
-  id               Int      @id @default(autoincrement())
-  email            String   @unique
-  passwordHash     String
-  username         String   @unique
-  firstName        String?
-  lastName         String?
-  roles            Role[]   @default([AGENTE])
+  id           Int     @id @default(autoincrement())
+  email        String  @unique
+  passwordHash String
+  username     String  @unique
+  firstName    String?
+  lastName     String?
+  roles        Role[]  @default([AGENTE])
 
   // --- NOVO: STATUS DO USUÁRIO ---
-  status           String   @default("PENDENTE") // PENDENTE, ATIVO, BLOQUEADO
+  status String @default("PENDENTE") // PENDENTE, ATIVO, BLOQUEADO
   // -------------------------------
 
   // --- VÍNCULO COM O CURSO (Departamento) ---
-  course           Course?  @relation("UserCourse", fields: [courseId], references: [id])
-  courseId         Int?      // Opcional pois Admin/Financeiro podem não ter curso fixo
+  course   Course? @relation("UserCourse", fields: [courseId], references: [id])
+  courseId Int? // Opcional pois Admin/Financeiro podem não ter curso fixo
 
   // Perfil do Agente
-  nomeSocial       String?
-  cpf              String?   @unique
-  rg               String?   @unique
-  orgaoExpeditor   String?
-  dataNascimento   DateTime?
-  genero           Gender?   @default(NAO_INFORMADO)
-  mae              String?
-  pai              String?
+  nomeSocial     String?
+  cpf            String?   @unique
+  rg             String?   @unique
+  orgaoExpeditor String?
+  dataNascimento DateTime?
+  genero         Gender?   @default(NAO_INFORMADO)
+  mae            String?
+  pai            String?
 
   // Contato e Endereço
-  telefone         String?   @unique
-  celular          String?   @unique
-  cep              String?
-  endereco         String?
-  bairro           String?
-  cidade           String?
-  estado           State?
+  telefone String? @unique
+  celular  String? @unique
+  cep      String?
+  endereco String?
+  numero   String?
+  bairro   String?
+  cidade   String?
+  estado   State?
 
   // Profissional e Bancário
-  titulacao        Titulacao?
-  funcao           Funcao?
-  
-  banco            Bank?     @relation(fields: [bankId], references: [id])
-  bankId           Int?
-  
-  agencia          String?
-  conta            String?
-  tipoConta        AccountType?
+  titulacao Titulacao?
+  funcao    Funcao?
+
+  banco  Bank? @relation(fields: [bankId], references: [id])
+  bankId Int?
+
+  agencia   String?
+  conta     String?
+  tipoConta AccountType?
 
   // Redes
   xUsername        String?
@@ -179,20 +180,20 @@ model User {
   profileImage     String?
 
   // Relacionamentos
-  solicitationsCreated Solicitation[] @relation("Solicitante")
+  solicitationsCreated Solicitation[]       @relation("Solicitante")
   detailsAsAgent       SolicitationDetail[]
   solicitantProfile    Solicitant?
 
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("users")
 }
 
 model Course {
-  id          Int          @id @default(autoincrement())
-  nome        String       @unique
-  
+  id   Int    @id @default(autoincrement())
+  nome String @unique
+
   // Relacionamentos
   solicitants Solicitant[]
   users       User[]       @relation("UserCourse") // <--- NOVO: Lista de usuários do curso
@@ -245,7 +246,7 @@ model Project {
   contaCorrente String
   saldo         Decimal              @default(0) @db.Decimal(14, 2)
   details       SolicitationDetail[]
-  course        Course?     @relation(fields: [courseId], references: [id])
+  course        Course?              @relation(fields: [courseId], references: [id])
   courseId      Int?
 
   @@map("projetos")
@@ -265,107 +266,109 @@ model Destination {
 
 // ATUALIZADO: Header da Viagem (Grupo)
 model Solicitation {
-  id                Int                  @id @default(autoincrement())
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
-  
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   // Regra 2: Solicitante define a viagem aqui (Origem/Destino/Datas iguais para todos)
-  motivoSolicitacao String               @db.Text
-  origem            String               // Texto ou ID se quiser forçar relação
-  destino           String               // Texto ou ID se quiser forçar relação
+  motivoSolicitacao String   @db.Text
+  origem            String // Texto ou ID se quiser forçar relação
+  destino           String // Texto ou ID se quiser forçar relação
   dataIda           DateTime
   dataVolta         DateTime
-  
-  status            SolicitationStatus   @default(RASCUNHO)
-  isTemporaria      Boolean              @default(false)
-  
+
+  status              SolicitationStatus @default(RASCUNHO)
+  // Motivo informado pela Direção/Financeiro ao devolver para correção
+  observacaoDevolucao String?            @db.Text
+  isTemporaria        Boolean            @default(false)
+
   // Quem criou (Solicitante)
-  requester         User                 @relation("Solicitante", fields: [requesterId], references: [id])
-  requesterId       Int
-  
-  details           SolicitationDetail[]
+  requester   User @relation("Solicitante", fields: [requesterId], references: [id])
+  requesterId Int
+
+  details SolicitationDetail[]
 
   @@map("solicitacoes")
 }
 
 // ATUALIZADO: Detalhe por Agente
 model SolicitationDetail {
-  id              Int                   @id @default(autoincrement())
-  
+  id Int @id @default(autoincrement())
+
   // Vínculo com a solicitação Pai
-  solicitation    Solicitation          @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
-  solicitationId  Int
-  
+  solicitation   Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
+  solicitationId Int
+
   // O Agente que vai viajar
-  agent           User                  @relation(fields: [agentId], references: [id])
-  agentId         Int
+  agent   User @relation(fields: [agentId], references: [id])
+  agentId Int
 
   // Dados Financeiros/Administrativos (Regra 2: Solicitante preenche)
   // Mantive obrigatório (sem ?) pois você disse que "Devem ser preenchidos"
-  project         Project               @relation(fields: [projectId], references: [id])
-  projectId       Int
-  
-  dailyRateType   DailyRateType         @relation(fields: [dailyRateTypeId], references: [id])
+  project   Project @relation(fields: [projectId], references: [id])
+  projectId Int
+
+  dailyRateType   DailyRateType @relation(fields: [dailyRateTypeId], references: [id])
   dailyRateTypeId Int
-  
-  objective       SolicitationObjective @relation(fields: [objectiveId], references: [id])
-  objectiveId     Int
+
+  objective   SolicitationObjective @relation(fields: [objectiveId], references: [id])
+  objectiveId Int
 
   // Dados específicos do transporte deste agente (se diferir do grupo)
-  bilhete         String?
-  meioTransporte  TransportType?
-  tipoVeiculo     VehicleType?
-  condutor        String?
-  placaVeiculo    String?
-  tipoViagem      TravelType?
-  
+  bilhete        String?
+  meioTransporte TransportType?
+  tipoVeiculo    VehicleType?
+  condutor       String?
+  placaVeiculo   String?
+  tipoViagem     TravelType?
+
   // Valores
-  qtdDiarias      Decimal               @db.Decimal(4, 1) // Regra 3: Max 3.5
-  autorizada      Boolean?              @default(false)
+  qtdDiarias Decimal  @db.Decimal(4, 1) // Regra 3: Max 3.5
+  autorizada Boolean? @default(false)
 
   // Referências de origem/destino individuais (opcional, já que tem no header)
-  origin          Destination?          @relation("OriginDestinations", fields: [originId], references: [id])
-  originId        Int?
-  destiny         Destination?          @relation("DestinyDestinations", fields: [destinyId], references: [id])
-  destinyId       Int?
+  origin    Destination? @relation("OriginDestinations", fields: [originId], references: [id])
+  originId  Int?
+  destiny   Destination? @relation("DestinyDestinations", fields: [destinyId], references: [id])
+  destinyId Int?
 
-  report          TravelReport?
+  report TravelReport?
 
   @@map("detalhes_solicitacao")
 }
 
 // ATUALIZADO: Relatório Automático
 model TravelReport {
-  id                   Int             @id @default(autoincrement())
-  createdAt            DateTime        @default(now())
-  
-  // Regra 5: Prazo de 5 dias
-  prazoLimite          DateTime
-  
-  status               ReportStatus    @default(ABERTO)
-  
-  // Preenchido pelo Agente
-  atividadesRealizadas String?         @db.Text
-  comprovanteUrl       String?
-  
-  // Vínculo 1:1 com o detalhe da solicitação
-  detail               SolicitationDetail @relation(fields: [detailId], references: [id], onDelete: Cascade)
-  detailId             Int                @unique
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
 
-  history              ReportHistory[]
+  // Regra 5: Prazo de 5 dias
+  prazoLimite DateTime
+
+  status ReportStatus @default(ABERTO)
+
+  // Preenchido pelo Agente
+  atividadesRealizadas String? @db.Text
+  comprovanteUrl       String?
+
+  // Vínculo 1:1 com o detalhe da solicitação
+  detail   SolicitationDetail @relation(fields: [detailId], references: [id], onDelete: Cascade)
+  detailId Int                @unique
+
+  history ReportHistory[]
 
   @@map("relatorios_viagem")
 }
 
 model ReportHistory {
-  id            Int             @id @default(autoincrement())
-  data          DateTime        @default(now())
-  acao          String          
-  motivoRecusa  RefusalReason?
-  observacao    String?
-  
-  report        TravelReport    @relation(fields: [reportId], references: [id], onDelete: Cascade)
-  reportId      Int
+  id           Int            @id @default(autoincrement())
+  data         DateTime       @default(now())
+  acao         String
+  motivoRecusa RefusalReason?
+  observacao   String?
+
+  report   TravelReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reportId Int
 
   @@map("historico_relatorios")
 }

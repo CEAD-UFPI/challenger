@@ -24,7 +24,7 @@ export default function Agents() {
         api.get("/cursos"),
       ]);
       setCourses(courseData.data);
-      setAgents(userData.data.filter((u: any) => !u.roles.includes("ADMIN")));
+      setAgents(userData.data.filter((u: any) => !u.roles?.includes("ADMIN")));
       setBanks(bankData.data);
     } catch (err) {
       console.error("Erro ao carregar dados", err);
@@ -114,9 +114,12 @@ export default function Agents() {
 
     setLoading(true);
     try {
+      // A senha é definida pelo próprio agente via link de convite
+      const { role, ...rest } = data;
       const payload = {
-        ...data,
-        roles: [data.role],
+        ...rest,
+        cpf: String(data.cpf).replace(/\D/g, ""),
+        roles: [role],
         bankId: data.bankId ? Number(data.bankId) : null,
         courseId: data.courseId ? Number(data.courseId) : null,
       };
@@ -255,19 +258,12 @@ export default function Agents() {
             />
           </div>
 
-          {/* SÓ MOSTRA A SENHA INICIAL SE ESTIVER CRIANDO NOVO (Não edita senha por aqui) */}
+          {/* A senha é criada pelo próprio usuário pelo link enviado por e-mail */}
           {!editingId && (
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">
-                Senha Inicial
-              </label>
-              <input
-                type="password"
-                {...register("password")}
-                required
-                className="w-full mt-1 p-3 bg-white rounded-xl border border-slate-200 focus:ring-2 focus:ring-purple-500 outline-none transition-all"
-                placeholder="******"
-              />
+            <div className="flex items-end">
+              <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3 w-full">
+                Um convite será enviado ao e-mail informado para o usuário definir a própria senha.
+              </p>
             </div>
           )}
 
@@ -282,6 +278,7 @@ export default function Agents() {
               <option value="COORDENACAO">Coordenação</option>
               <option value="FINANCEIRO">Financeiro</option>
               <option value="DIRECAO">Direção</option>
+              <option value="FADEX">FADEX</option>
             </select>
           </div>
 

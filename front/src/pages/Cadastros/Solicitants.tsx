@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import api from "../../services/api";
 import { UserCog, Plus, Trash2, Link as LinkIcon } from "lucide-react";
@@ -14,7 +14,7 @@ export default function Solicitants() {
   const loadData = async () => {
     try {
       const [sData, uData, cData] = await Promise.all([
-        api.get("/solicitantes"),
+        api.get("/solicitantes").catch(() => ({ data: [] })), // Evita quebrar se a rota não existir
         api.get("/users"),
         api.get("/cursos"),
       ]);
@@ -23,6 +23,7 @@ export default function Solicitants() {
       setCourses(cData.data);
     } catch (err) {
       console.error("Erro ao carregar dados", err);
+      alert("Erro ao carregar listas. Verifique se o backend está rodando.");
     }
   };
 
@@ -34,7 +35,10 @@ export default function Solicitants() {
   const onSubmit = async (data: any) => {
     setLoading(true);
     try {
-      await api.post("/solicitantes", data);
+      await api.post("/solicitantes", {
+        userId: Number(data.userId),
+        courseId: Number(data.courseId),
+      });
       reset();
       loadData();
     } catch (e) {
